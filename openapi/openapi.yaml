@@ -1,0 +1,952 @@
+openapi: 3.1.0
+
+info:
+  title: Avito Kitchen API
+  description: |
+    MVP API сервиса Avito.Kitchen.
+
+    API разделён на две части:
+
+    1. Client API — API для клиентского приложения:
+       просмотр ресторанов, филиалов и меню,
+       работа с корзиной и оформление заказа.
+
+    2. Restaurant Integration API — API для интеграции
+       ресторанов с Kitchen API:
+       синхронизация каталога и проверка/создание заказов.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8000
+
+tags:
+  - name: catalog
+    description: Client catalog API
+  - name: cart
+    description: Client cart API
+  - name: integration
+    description: Restaurant integration API
+
+paths:
+
+  # ============================================================
+  # CLIENT API — CATALOG
+  # ============================================================
+
+  /api/v1/restaurants:
+    get:
+      tags:
+        - catalog
+      summary: Get restaurants
+      operationId: getRestaurants
+      responses:
+        "200":
+          description: List of restaurants
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RestaurantResponse"
+
+  /api/v1/restaurants/{restaurant_id}/branches:
+    get:
+      tags:
+        - catalog
+      summary: Get restaurant branches
+      operationId: getRestaurantBranches
+      parameters:
+        - name: restaurant_id
+          in: path
+          required: true
+          description: Internal restaurant identifier
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: List of restaurant branches
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BranchResponse"
+
+  /api/v1/branches/{branch_id}/menu:
+    get:
+      tags:
+        - catalog
+      summary: Get branch menu
+      operationId: getBranchMenu
+      parameters:
+        - name: branch_id
+          in: path
+          required: true
+          description: Internal branch identifier
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Branch menu
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BranchMenuResponse"
+
+  # ============================================================
+  # CLIENT API — CART
+  # ============================================================
+
+  /api/v1/branches/{branch_id}/cart:
+    get:
+      tags:
+        - cart
+      summary: Get customer cart
+      operationId: getCart
+      parameters:
+        - $ref: "#/components/parameters/BranchId"
+        - $ref: "#/components/parameters/UserEmail"
+      responses:
+        "200":
+          description: Customer cart
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartResponse"
+
+    # ========================================================
+    # ADD CART ITEM
+    # ========================================================
+
+  /api/v1/branches/{branch_id}/cart/items:
+    post:
+      tags:
+        - cart
+      summary: Add item to cart
+      operationId: addCartItem
+      parameters:
+        - $ref: "#/components/parameters/BranchId"
+        - $ref: "#/components/parameters/UserEmail"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddCartItemRequest"
+      responses:
+        "200":
+          description: Updated cart
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartResponse"
+
+  # ============================================================
+  # UPDATE CART ITEM
+  # ============================================================
+
+  /api/v1/branches/{branch_id}/cart/items/{menu_item_id}:
+    patch:
+      tags:
+        - cart
+      summary: Update cart item quantity
+      operationId: updateCartItem
+      parameters:
+        - $ref: "#/components/parameters/BranchId"
+        - $ref: "#/components/parameters/MenuItemId"
+        - $ref: "#/components/parameters/UserEmail"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCartItemRequest"
+      responses:
+        "200":
+          description: Updated cart
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartResponse"
+
+    delete:
+      tags:
+        - cart
+      summary: Remove item from cart
+      operationId: removeCartItem
+      parameters:
+        - $ref: "#/components/parameters/BranchId"
+        - $ref: "#/components/parameters/MenuItemId"
+        - $ref: "#/components/parameters/UserEmail"
+      responses:
+        "200":
+          description: Updated cart
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartResponse"
+
+  # ============================================================
+  # CHECKOUT
+  # ============================================================
+
+  /api/v1/branches/{branch_id}/cart/checkout:
+    post:
+      tags:
+        - cart
+      summary: Checkout customer cart
+      operationId: checkoutCart
+      parameters:
+        - $ref: "#/components/parameters/BranchId"
+        - $ref: "#/components/parameters/UserEmail"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CheckoutRequest"
+      responses:
+        "200":
+          description: Checkout result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckoutResponse"
+
+  # ============================================================
+  # RESTAURANT INTEGRATION API
+  # ============================================================
+
+  /integration/v1/sync:
+    post:
+      tags:
+        - integration
+      summary: Synchronize restaurant catalog
+      operationId: syncRestaurant
+      description: |
+        Accepts a full snapshot of the restaurant catalog.
+
+        The version field is used for optimistic synchronization.
+        A snapshot with a version less than or equal to the current
+        stored version is ignored.
+
+        The snapshot contains:
+        - restaurant information;
+        - all restaurant branches;
+        - menu and menu items;
+        - availability of every menu item in every branch.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SyncPayload"
+      responses:
+        "200":
+          description: Synchronization result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncResponse"
+
+  /integration/v1/orders/validate:
+    post:
+      tags:
+        - integration
+      summary: Validate order
+      operationId: validateOrder
+      description: |
+        Validates an order against the current Kitchen API catalog.
+
+        Validation checks:
+        - branch availability;
+        - product existence;
+        - product availability;
+        - product availability in the requested branch;
+        - current product price.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderValidationRequest"
+      responses:
+        "200":
+          description: Order validation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderValidationResponse"
+
+  /integration/v1/orders:
+    post:
+      tags:
+        - integration
+      summary: Create order
+      operationId: createOrder
+      description: |
+        Creates an order in the restaurant.
+
+        The order_id identifies one logical order creation operation
+        and is used as an idempotency key.
+
+        Multiple HTTP requests with the same order_id may represent
+        retries of the same logical operation.
+
+        If the same order_id is received with the same request payload,
+        the previously stored successful result is returned.
+
+        If the same order_id is received with a different request payload,
+        the request is rejected as a business validation result.
+
+        An accepted=false response is returned with HTTP 200.
+
+        The Kitchen API first validates the requested order against
+        its current catalog and then sends the order to the restaurant.
+      parameters:
+        - $ref: "#/components/parameters/UserEmail"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrderRequest"
+      responses:
+        "200":
+          description: Order creation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateOrderResponse"
+
+# ==============================================================
+# COMPONENTS
+# ==============================================================
+
+components:
+
+  # ============================================================
+  # PARAMETERS
+  # ============================================================
+
+  parameters:
+
+    BranchId:
+      name: branch_id
+      in: path
+      required: true
+      description: Internal branch identifier
+      schema:
+        type: string
+        format: uuid
+
+    MenuItemId:
+      name: menu_item_id
+      in: path
+      required: true
+      description: Internal menu item identifier
+      schema:
+        type: string
+        format: uuid
+
+    UserEmail:
+      name: X-User-Email
+      in: header
+      required: true
+      description: Customer email used to identify the customer
+      schema:
+        type: string
+        minLength: 1
+
+  # ============================================================
+  # COMMON SCHEMAS
+  # ============================================================
+
+  schemas:
+
+    NonEmptyString:
+      type: string
+      minLength: 1
+
+    BusinessErrorCode:
+      type: string
+      enum:
+        - BRANCH_UNAVAILABLE
+        - PRODUCT_NOT_FOUND
+        - PRODUCT_UNAVAILABLE
+        - INSUFFICIENT_QUANTITY
+        - PRICE_CHANGED
+        - RESTAURANT_TIMEOUT
+
+    # ==========================================================
+    # CATALOG RESPONSE SCHEMAS
+    # ==========================================================
+
+    RestaurantResponse:
+      type: object
+      required:
+        - id
+        - name
+        - description
+      properties:
+        id:
+          type: string
+          format: uuid
+
+        name:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        description:
+          type:
+            - string
+            - "null"
+
+    BranchResponse:
+      type: object
+      required:
+        - id
+        - name
+        - address
+        - is_active
+        - is_accepting_orders
+      properties:
+        id:
+          type: string
+          format: uuid
+
+        name:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        address:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        is_active:
+          type: boolean
+
+        is_accepting_orders:
+          type: boolean
+
+    MenuItemResponse:
+      type: object
+      required:
+        - id
+        - external_id
+        - name
+        - description
+        - price
+        - is_available
+      properties:
+        id:
+          type: string
+          format: uuid
+
+        external_id:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        name:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        description:
+          type:
+            - string
+            - "null"
+
+        price:
+          type: integer
+          exclusiveMinimum: 0
+
+        is_available:
+          type: boolean
+
+    BranchMenuResponse:
+      type: object
+      required:
+        - branch_id
+        - items
+      properties:
+        branch_id:
+          type: string
+          format: uuid
+
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MenuItemResponse"
+
+    # ==========================================================
+    # CART REQUEST SCHEMAS
+    # ==========================================================
+
+    AddCartItemRequest:
+      type: object
+      required:
+        - menu_item_id
+        - quantity
+      properties:
+        menu_item_id:
+          type: string
+          format: uuid
+
+        quantity:
+          type: integer
+          minimum: 1
+
+    UpdateCartItemRequest:
+      type: object
+      required:
+        - quantity
+      properties:
+        quantity:
+          type: integer
+          minimum: 1
+
+    # ==========================================================
+    # CART RESPONSE SCHEMAS
+    # ==========================================================
+
+    CartItemResponse:
+      type: object
+      required:
+        - menu_item_id
+        - menu_item_external_id
+        - name
+        - price
+        - quantity
+        - is_available
+      properties:
+        menu_item_id:
+          type: string
+          format: uuid
+
+        menu_item_external_id:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        name:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        price:
+          type: integer
+          exclusiveMinimum: 0
+
+        quantity:
+          type: integer
+          minimum: 1
+
+        is_available:
+          type: boolean
+
+    CartResponse:
+      type: object
+      required:
+        - id
+        - branch_id
+        - items
+      properties:
+        id:
+          type: string
+          format: uuid
+
+        branch_id:
+          type: string
+          format: uuid
+
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CartItemResponse"
+
+    CheckoutRequest:
+      type: object
+      required:
+        - order_id
+      properties:
+        order_id:
+          $ref: "#/components/schemas/NonEmptyString"
+
+    CheckoutResponse:
+      type: object
+      required:
+        - accepted
+        - order_id
+        - restaurant_order_id
+        - reason
+      properties:
+        accepted:
+          type: boolean
+
+        order_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+
+        restaurant_order_id:
+          type:
+            - string
+            - "null"
+          minLength: 1
+
+        reason:
+          type:
+            - string
+            - "null"
+
+    # ==========================================================
+    # SYNC SCHEMAS
+    # ==========================================================
+
+    SyncStatus:
+      type: string
+      enum:
+        - UPDATED
+        - IGNORED
+
+    RestaurantSync:
+      type: object
+      required:
+        - external_id
+        - name
+        - description
+      properties:
+        external_id:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        name:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        description:
+          type:
+            - string
+            - "null"
+
+    BranchSync:
+      type: object
+      required:
+        - external_id
+        - name
+        - address
+        - is_active
+        - is_accepting_orders
+      properties:
+        external_id:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        name:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        address:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        is_active:
+          type: boolean
+
+        is_accepting_orders:
+          type: boolean
+
+    MenuItemSync:
+      type: object
+      required:
+        - external_id
+        - name
+        - description
+        - price
+        - is_active
+      properties:
+        external_id:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        name:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        description:
+          type:
+            - string
+            - "null"
+
+        price:
+          type: integer
+          exclusiveMinimum: 0
+
+        is_active:
+          type: boolean
+
+    MenuSync:
+      type: object
+      required:
+        - external_id
+        - name
+        - items
+      properties:
+        external_id:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        name:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MenuItemSync"
+
+    MenuItemAvailabilitySync:
+      type: object
+      required:
+        - menu_item_external_id
+        - is_available
+      properties:
+        menu_item_external_id:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        is_available:
+          type: boolean
+
+    BranchAvailabilitySync:
+      type: object
+      required:
+        - branch_external_id
+        - items
+      properties:
+        branch_external_id:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MenuItemAvailabilitySync"
+
+    SyncPayload:
+      type: object
+      required:
+        - version
+        - restaurant
+        - branches
+        - menu
+        - availability
+      properties:
+        version:
+          type: integer
+          minimum: 1
+
+        restaurant:
+          $ref: "#/components/schemas/RestaurantSync"
+
+        branches:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/BranchSync"
+
+        menu:
+          $ref: "#/components/schemas/MenuSync"
+
+        availability:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/BranchAvailabilitySync"
+
+    UpdatedSyncResponse:
+      type: object
+      required:
+        - status
+        - version
+      properties:
+        status:
+          type: string
+          enum:
+            - UPDATED
+
+        version:
+          type: integer
+          minimum: 1
+
+    IgnoredSyncResponse:
+      type: object
+      required:
+        - status
+        - version
+        - reason
+      properties:
+        status:
+          type: string
+          enum:
+            - IGNORED
+
+        version:
+          type: integer
+          minimum: 1
+
+        reason:
+          type: string
+          enum:
+            - OUTDATED_VERSION
+
+    SyncResponse:
+      oneOf:
+        - $ref: "#/components/schemas/UpdatedSyncResponse"
+        - $ref: "#/components/schemas/IgnoredSyncResponse"
+      discriminator:
+        propertyName: status
+        mapping:
+          UPDATED: "#/components/schemas/UpdatedSyncResponse"
+          IGNORED: "#/components/schemas/IgnoredSyncResponse"
+
+    # ==========================================================
+    # ORDER REQUEST SCHEMAS
+    # ==========================================================
+
+    OrderItemRequest:
+      type: object
+      required:
+        - menu_item_external_id
+        - quantity
+        - unit_price
+      properties:
+        menu_item_external_id:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        quantity:
+          type: integer
+          minimum: 1
+
+        unit_price:
+          type: integer
+          exclusiveMinimum: 0
+
+    OrderValidationRequest:
+      type: object
+      required:
+        - branch_external_id
+        - items
+      properties:
+        branch_external_id:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/OrderItemRequest"
+
+    CreateOrderRequest:
+      type: object
+      required:
+        - order_id
+        - branch_external_id
+        - items
+      properties:
+        order_id:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        branch_external_id:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/OrderItemRequest"
+
+    # ==========================================================
+    # ORDER VALIDATION RESPONSE
+    # ==========================================================
+
+    ValidationIssue:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          $ref: "#/components/schemas/BusinessErrorCode"
+
+        message:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        menu_item_external_id:
+          type:
+            - string
+            - "null"
+          minLength: 1
+
+        old_price:
+          type:
+            - integer
+            - "null"
+          exclusiveMinimum: 0
+
+        current_price:
+          type:
+            - integer
+            - "null"
+          exclusiveMinimum: 0
+
+    OrderValidationResponse:
+      type: object
+      required:
+        - valid
+        - issues
+      properties:
+        valid:
+          type: boolean
+
+        issues:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationIssue"
+
+    # ==========================================================
+    # CREATE ORDER RESPONSE
+    # ==========================================================
+
+    CreateOrderResponse:
+      type: object
+      required:
+        - accepted
+      properties:
+        accepted:
+          type: boolean
+
+        order_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: Local Kitchen API order identifier.
+
+        restaurant_order_id:
+          type:
+            - string
+            - "null"
+          minLength: 1
+          description: Restaurant-owned order identifier.
+
+        reason:
+          anyOf:
+            - $ref: "#/components/schemas/ValidationIssue"
+            - type: "null"
+
+      description: |
+        If accepted is true, order_id and restaurant_order_id are returned
+        and reason is null.
+
+        If accepted is false, reason is returned and
+        restaurant_order_id is null.
+
+        order_id may be null for rejected orders.
+
+    IdempotencyKeyReuseError:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          enum:
+            - IDEMPOTENCY_KEY_REUSE
+
+        message:
+          $ref: "#/components/schemas/NonEmptyString"

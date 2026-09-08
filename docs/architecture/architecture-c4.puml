@@ -1,0 +1,66 @@
+@startuml
+
+title Avito.Kitchen — C4 Level 2 — Container Diagram
+
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam packageStyle rectangle
+
+skinparam rectangle {
+    RoundCorner 15
+}
+
+actor "Customer" as customer
+
+rectangle "Avito.Kitchen" {
+
+    rectangle "Web Client" as web {
+        note right
+            Web application
+
+            Provides:
+            - restaurant browsing
+            - branch selection
+            - menu browsing
+            - cart management
+            - checkout
+        end note
+    }
+
+    rectangle "Kitchen API" as api {
+        note right
+            Python / FastAPI
+
+            Provides:
+            - Catalog API
+            - Cart API
+            - Order processing
+            - Restaurant integration
+            - Catalog synchronization
+        end note
+    }
+
+    database "PostgreSQL" as db {
+    }
+}
+
+rectangle "Demo Restaurant" as restaurant {
+    note right
+        Python / FastAPI
+
+        Example restaurant service
+        used to demonstrate integration.
+    end note
+}
+
+customer --> web : Uses
+
+web --> api : REST API\nHTTP / JSON
+
+api --> db : Reads / writes\nSQL / asyncpg
+
+api --> restaurant : Sends orders\nHTTP / JSON
+
+restaurant --> api : Catalog sync /\norder result\nHTTP / JSON
+
+@enduml

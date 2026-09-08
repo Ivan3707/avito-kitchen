@@ -1,0 +1,133 @@
+@startuml
+
+!theme plain
+hide circle
+skinparam linetype ortho
+
+title Avito Kitchen — Entity Relationship Diagram
+
+entity "users" as users {
+    * id : UUID <<PK>>
+    --
+    * email : VARCHAR <<UNIQUE>>
+    * created_at : TIMESTAMP
+}
+
+entity "restaurants" as restaurants {
+    * id : UUID <<PK>>
+    --
+    * external_id : VARCHAR <<UNIQUE>>
+    * name : VARCHAR
+    description : TEXT
+    * sync_version : INTEGER
+    * created_at : TIMESTAMP
+    * updated_at : TIMESTAMP
+}
+
+entity "restaurant_branches" as branches {
+    * id : UUID <<PK>>
+    --
+    * restaurant_id : UUID <<FK>>
+    * external_id : VARCHAR
+    * name : VARCHAR
+    * address : VARCHAR
+    * is_active : BOOLEAN
+    * is_accepting_orders : BOOLEAN
+    * created_at : TIMESTAMP
+    * updated_at : TIMESTAMP
+}
+
+entity "menus" as menus {
+    * id : UUID <<PK>>
+    --
+    * restaurant_id : UUID <<FK>>
+    * external_id : VARCHAR
+    * name : VARCHAR
+    * created_at : TIMESTAMP
+    * updated_at : TIMESTAMP
+}
+
+entity "menu_items" as menu_items {
+    * id : UUID <<PK>>
+    --
+    * menu_id : UUID <<FK>>
+    * external_id : VARCHAR
+    * name : VARCHAR
+    description : TEXT
+    * price : INTEGER
+    * is_active : BOOLEAN
+    * created_at : TIMESTAMP
+    * updated_at : TIMESTAMP
+}
+
+entity "branch_menu_items" as branch_menu_items {
+    * id : UUID <<PK>>
+    --
+    * branch_id : UUID <<FK>>
+    * menu_item_id : UUID <<FK>>
+    * is_available : BOOLEAN
+}
+
+entity "carts" as carts {
+    * id : UUID <<PK>>
+    --
+    * customer_id : UUID <<FK>>
+    * branch_id : UUID <<FK>>
+    * created_at : TIMESTAMP
+    * updated_at : TIMESTAMP
+}
+
+entity "cart_items" as cart_items {
+    * id : UUID <<PK>>
+    --
+    * cart_id : UUID <<FK>>
+    * menu_item_id : UUID <<FK>>
+    * quantity : INTEGER
+}
+
+entity "orders" as orders {
+    * id : UUID <<PK>>
+    --
+    * customer_id : UUID <<FK>>
+    * branch_id : UUID <<FK>>
+    * external_order_id : VARCHAR <<UNIQUE>>
+    restaurant_order_id : VARCHAR
+    * status : VARCHAR
+    * created_at : TIMESTAMP
+    * updated_at : TIMESTAMP
+}
+
+entity "order_items" as order_items {
+    * id : UUID <<PK>>
+    --
+    * order_id : UUID <<FK>>
+    * menu_item_id : UUID <<FK>>
+    * quantity : INTEGER
+    * unit_price : INTEGER
+}
+
+' ============================================================
+' Relationships
+' ============================================================
+
+restaurants ||--o{ branches : has
+restaurants ||--|| menus : owns
+
+menus ||--o{ menu_items : contains
+
+branches ||--o{ branch_menu_items : configures
+menu_items ||--o{ branch_menu_items : available_in
+
+users ||--o{ carts : owns
+branches ||--o{ carts : contains
+
+carts ||--o{ cart_items : contains
+menu_items ||--o{ cart_items : references
+
+users ||--o{ orders : creates
+branches ||--o{ orders : receives
+
+orders ||--o{ order_items : contains
+menu_items ||--o{ order_items : ordered
+
+@enduml
