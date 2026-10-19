@@ -2,3 +2,8 @@
 .env.test
 __pycache__/
 *.py[cod]
+HANDOFF.md
+ТЗ_авитокухня.txt
+ИнструкцииИИ.md
+.venv/
+venv/

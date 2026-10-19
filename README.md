@@ -567,17 +567,14 @@ begin
 
 Сервисы являются отдельными приложениями и могут иметь собственные зависимости и виртуальные окружения.
 
-Для Kitchen API используется `uv`.
+Для Kitchen API.
 
-Поэтому команды рекомендуется запускать через:
+Команды рекомендуется запускать в services/kitchen-api:
 
 ```bash
+cd services/kitchen-api
 uv run <command>
 ```
-
-Это гарантирует, что команда будет выполнена с зависимостями, указанными для соответствующего сервиса.
-
-Например:
 
 ```bash
 uv run pytest -q
@@ -590,7 +587,21 @@ uv run ruff check .
 ```bash
 uv run ruff format --check .
 ```
+Это гарантирует, что команда будет выполнена с зависимостями, указанными для соответствующего сервиса.
 
+Для Demo Restaurant команды должны выполняться в services/demo-restaurant:
+```bash
+cd services/demo-restaurant
+```
+```bash
+uv run pytest -q
+```
+```bash
+uv run ruff check .
+```
+```bash
+uv run ruff format --check .
+```
 ---
 
 # Running the Project
