@@ -4,6 +4,7 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.integration import get_uow, router
 from app.infrastructure.clients.restaurant import RestaurantClient
@@ -11,12 +12,14 @@ from app.infrastructure.unit_of_work import UnitOfWork
 
 
 @pytest.fixture
-def api_app(uow: UnitOfWork) -> FastAPI:
+def api_app(
+    test_session_factory: async_sessionmaker[AsyncSession],
+) -> FastAPI:
     app = FastAPI()
     app.include_router(router)
 
     async def override_get_uow() -> UnitOfWork:
-        return uow
+        return UnitOfWork(test_session_factory)
 
     app.dependency_overrides[get_uow] = override_get_uow
 

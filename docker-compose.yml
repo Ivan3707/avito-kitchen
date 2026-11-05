@@ -1,5 +1,5 @@
 services:
-  postgres:
+  kitchen-db:
     image: postgres:16
     container_name: avito-kitchen-postgres
     environment:
@@ -9,7 +9,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      -  postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d kitchen"]
       interval: 5s
@@ -21,15 +21,33 @@ services:
       context: ./services/kitchen-api
     container_name: avito-kitchen-api
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/kitchen
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@kitchen-db:5432/kitchen
     ports:
       - "8000:8000"
     depends_on:
-      postgres:
+      kitchen-db:
         condition: service_healthy
     command: >
       sh -c "uv run alembic upgrade head &&
         uv run uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  restaurant-db:
+    image: postgres:16
+    container_name: restaurant-postgres
+    environment:
+      POSTGRES_DB: restaurant
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - restaurant_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d restaurant"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 
   demo-restaurant:
     build:
@@ -37,13 +55,21 @@ services:
     container_name: avito-kitchen-demo-restaurant
     environment:
       KITCHEN_API_URL: http://kitchen-api:8000
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@restaurant-db:5432/restaurant
+      RESTAURANT_EXTERNAL_ID: restaurant-001
+      RESTAURANT_NAME: Demo Restaurant
+      MENU_EXTERNAL_ID: menu-001
+      MENU_NAME: Main Menu
     ports:
       - "8001:8001"
     depends_on:
+      restaurant-db:
+        condition: service_healthy
       kitchen-api:
         condition: service_started
     command: >
-      uv run uvicorn app.main:app --host 0.0.0.0 --port 8001
+      uv run uvicorn app.api.main:app --host 0.0.0.0 --port 8001
 
 volumes:
   postgres_data:
+  restaurant_postgres_data:

@@ -122,15 +122,13 @@ class SyncPayload(BaseModel):
 
 
 class UpdatedSyncResponse(BaseModel):
-    status: Literal[SyncStatus.UPDATED] = SyncStatus.UPDATED
+    status: Literal["updated"] = SyncStatus.UPDATED
     version: int = Field(ge=1)
 
 
 class IgnoredSyncResponse(BaseModel):
-    status: Literal[SyncStatus.IGNORED] = SyncStatus.IGNORED
+    status: Literal["ignored"] = SyncStatus.IGNORED
     version: int = Field(ge=1)
-    reason: Literal["OUTDATED_VERSION"] = "OUTDATED_VERSION"
-
 
 SyncResponse = Annotated[
     UpdatedSyncResponse | IgnoredSyncResponse,
