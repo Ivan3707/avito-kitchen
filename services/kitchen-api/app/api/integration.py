@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 from fastapi import APIRouter, Depends, Header
 
 from app.core.config import settings
@@ -22,6 +24,10 @@ router = APIRouter(
 
 def get_uow() -> UnitOfWork:
     return UnitOfWork(async_session_maker)
+
+
+def get_uow_factory() -> Callable[[], UnitOfWork]:
+    return lambda: UnitOfWork(async_session_maker)
 
 
 @router.post(
@@ -65,16 +71,14 @@ async def validate_order(
 async def create_order(
     payload: CreateOrderRequest,
     x_user_email: str = Header(...),
-    uow: UnitOfWork = Depends(get_uow),
+    uow_factory: Callable[[], UnitOfWork] = Depends(get_uow_factory),
 ) -> CreateOrderResponse:
     service = OrderService()
-
-    async with uow:
-        return await service.create_order(
-            uow=uow,
-            request=payload,
-            customer_email=x_user_email,
-            restaurant_client=RestaurantClient(
-                settings.DEMO_RESTAURANT_URL,
-            ),
-        )
+    return await service.create_order(
+        uow_factory=uow_factory,
+        request=payload,
+        customer_email=x_user_email,
+        restaurant_client=RestaurantClient(
+            settings.DEMO_RESTAURANT_URL,
+        ),
+    )

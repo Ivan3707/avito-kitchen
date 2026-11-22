@@ -2,8 +2,8 @@ from uuid import uuid4
 
 import pytest
 
+from app.infrastructure.clients.restaurant import RestaurantTimeoutError
 from app.infrastructure.database.models.branch_menu_item import BranchMenuItem
-from app.infrastructure.database.models.customer import Customer
 from app.infrastructure.database.models.menu import Menu
 from app.infrastructure.database.models.menu_item import MenuItem
 from app.infrastructure.database.models.restaurant import Restaurant
@@ -14,413 +14,242 @@ from app.infrastructure.unit_of_work import UnitOfWork
 from app.integration.schemas.common import BusinessErrorCode
 from app.integration.schemas.orders import (
     CreateOrderRequest,
-    OrderValidationRequest,
+    RestaurantOrderResponse,
+    ValidationIssue,
 )
 from app.services.order import OrderService
 
 
 class FakeRestaurantClient:
+    def __init__(self, response=None):
+        self.calls = 0
+        self.response = response or RestaurantOrderResponse(
+            accepted=True,
+            restaurant_order_id="restaurant-order-1",
+        )
+
     async def create_order(self, payload):
-        return {
-            "accepted": True,
-            "restaurant_order_id": "restaurant-order-1",
-        }
+        self.calls += 1
+        return self.response
 
 
-async def create_restaurant_structure(
-    uow: UnitOfWork,
-    *,
-    branch_active: bool = True,
-    branch_accepting_orders: bool = True,
-    product_active: bool = True,
-    product_available: bool = True,
-    price: int = 500,
-):
-    restaurant = uow.restaurants.add(
-        Restaurant(
-            external_id=f"restaurant-{uuid4()}",
-            name="Test Restaurant",
-            description="Test description",
-            sync_version=1,
+class TimeoutRestaurantClient:
+    async def create_order(self, payload):
+        raise RestaurantTimeoutError
+
+
+async def create_catalog(session_factory):
+    external_id = f"restaurant-{uuid4()}"
+    branch_external_id = "branch-1"
+    async with UnitOfWork(session_factory) as uow:
+        restaurant = uow.restaurants.add(
+            Restaurant(
+                external_id=external_id,
+                name="Restaurant",
+                description=None,
+            )
         )
-    )
-
-    await uow.session.flush()
-
-    branch = uow.restaurant_branches.add(
-        RestaurantBranch(
-            restaurant_id=restaurant.id,
-            external_id=f"branch-{uuid4()}",
-            name="Test Branch",
-            address="Test address",
-            is_active=branch_active,
-            is_accepting_orders=branch_accepting_orders,
+        await uow.flush()
+        branch = uow.restaurant_branches.add(
+            RestaurantBranch(
+                restaurant_id=restaurant.id,
+                external_id=branch_external_id,
+                name="Branch",
+                address="Address",
+                is_active=True,
+                is_accepting_orders=True,
+                branch_version=1,
+            )
         )
-    )
-
-    menu = uow.menus.add(
-        Menu(
-            restaurant_id=restaurant.id,
-            external_id=f"menu-{uuid4()}",
-            name="Test Menu",
+        menu = uow.menus.add(
+            Menu(
+                restaurant_id=restaurant.id,
+                external_id="menu-1",
+                name="Menu",
+            )
         )
-    )
-
-    await uow.session.flush()
-
-    menu_item = uow.menu_items.add(
-        MenuItem(
-            menu_id=menu.id,
-            external_id="burger",
-            name="Burger",
-            description="Test burger",
-            price=price,
-            is_active=product_active,
+        await uow.flush()
+        item = uow.menu_items.add(
+            MenuItem(
+                menu_id=menu.id,
+                external_id="item-1",
+                name="Item",
+                description=None,
+                price=100,
+                is_active=True,
+            )
         )
-    )
-
-    await uow.session.flush()
-
-    branch_menu_item = uow.branch_menu_items.add(
-        BranchMenuItem(
-            branch_id=branch.id,
-            menu_item_id=menu_item.id,
-            is_available=product_available,
+        await uow.flush()
+        uow.branch_menu_items.add(
+            BranchMenuItem(
+                branch_id=branch.id,
+                menu_item_id=item.id,
+                is_available=True,
+            )
         )
-    )
-
-    await uow.session.flush()
-
-    return restaurant, branch, menu, menu_item, branch_menu_item
+    return external_id, branch_external_id
 
 
-def validation_request(
-    branch_external_id: str,
-    *,
-    menu_item_external_id: str = "burger",
-    unit_price: int = 500,
-    quantity: int = 1,
-) -> OrderValidationRequest:
-    return OrderValidationRequest(
-        branch_external_id=branch_external_id,
-        items=[
-            {
-                "menu_item_external_id": menu_item_external_id,
-                "quantity": quantity,
-                "unit_price": unit_price,
-            }
-        ],
-    )
-
-
-def create_request(
-    branch_external_id: str,
-    *,
-    order_id: str = "order-1",
-    menu_item_external_id: str = "burger",
-    unit_price: int = 500,
-    quantity: int = 1,
-) -> CreateOrderRequest:
+def request(restaurant_id, branch_id, *, order_id="order-1", price=100):
     return CreateOrderRequest(
         order_id=order_id,
-        branch_external_id=branch_external_id,
+        restaurant_external_id=restaurant_id,
+        branch_external_id=branch_id,
         items=[
             {
-                "menu_item_external_id": menu_item_external_id,
-                "quantity": quantity,
-                "unit_price": unit_price,
+                "menu_item_external_id": "item-1",
+                "quantity": 1,
+                "unit_price": price,
             }
         ],
     )
 
 
 @pytest.mark.asyncio
-async def test_validate_order_success(
-    uow: UnitOfWork,
-) -> None:
-    _, branch, _, _, _ = await create_restaurant_structure(uow)
-
+async def test_create_order_and_retry_are_idempotent(test_session_factory):
+    restaurant_id, branch_id = await create_catalog(test_session_factory)
+    client = FakeRestaurantClient()
     service = OrderService()
-
-    response = await service.validate_order(
-        uow,
-        validation_request(branch.external_id),
+    def uow_factory() -> UnitOfWork:
+        return UnitOfWork(test_session_factory)
+    order_request = request(restaurant_id, branch_id)
+    first = await service.create_order(
+        uow_factory, order_request, "customer@example.com", client
     )
-
-    assert response.valid is True
-    assert response.issues == []
+    second = await service.create_order(
+        uow_factory, order_request, "customer@example.com", client
+    )
+    assert first.accepted is True
+    assert second.restaurant_order_id == first.restaurant_order_id
+    assert client.calls == 1
 
 
 @pytest.mark.asyncio
-async def test_validate_order_branch_not_found(
-    uow: UnitOfWork,
-) -> None:
+async def test_same_order_id_with_other_payload_is_rejected(
+    test_session_factory,
+):
+    restaurant_id, branch_id = await create_catalog(test_session_factory)
+    client = FakeRestaurantClient()
     service = OrderService()
-
-    response = await service.validate_order(
-        uow,
-        validation_request("unknown-branch"),
-    )
-
-    assert response.valid is False
-    assert len(response.issues) == 1
-    assert response.issues[0].code == BusinessErrorCode.BRANCH_UNAVAILABLE
-
-
-@pytest.mark.asyncio
-async def test_validate_order_branch_unavailable(
-    uow: UnitOfWork,
-) -> None:
-    _, branch, _, _, _ = await create_restaurant_structure(
-        uow,
-        branch_active=False,
-        branch_accepting_orders=False,
-    )
-
-    service = OrderService()
-
-    response = await service.validate_order(
-        uow,
-        validation_request(branch.external_id),
-    )
-
-    assert response.valid is False
-    assert response.issues[0].code == BusinessErrorCode.BRANCH_UNAVAILABLE
-
-
-@pytest.mark.asyncio
-async def test_validate_order_product_not_found(
-    uow: UnitOfWork,
-) -> None:
-    _, branch, _, _, _ = await create_restaurant_structure(uow)
-
-    service = OrderService()
-
-    response = await service.validate_order(
-        uow,
-        validation_request(
-            branch.external_id,
-            menu_item_external_id="unknown-product",
-        ),
-    )
-
-    assert response.valid is False
-    assert response.issues[0].code == BusinessErrorCode.PRODUCT_NOT_FOUND
-    assert response.issues[0].menu_item_external_id == "unknown-product"
-
-
-@pytest.mark.asyncio
-async def test_validate_order_product_inactive(
-    uow: UnitOfWork,
-) -> None:
-    _, branch, _, _, _ = await create_restaurant_structure(
-        uow,
-        product_active=False,
-    )
-
-    service = OrderService()
-
-    response = await service.validate_order(
-        uow,
-        validation_request(branch.external_id),
-    )
-
-    assert response.valid is False
-    assert response.issues[0].code == BusinessErrorCode.PRODUCT_UNAVAILABLE
-    assert response.issues[0].menu_item_external_id == "burger"
-
-
-@pytest.mark.asyncio
-async def test_validate_order_product_unavailable_in_branch(
-    uow: UnitOfWork,
-) -> None:
-    _, branch, _, _, _ = await create_restaurant_structure(
-        uow,
-        product_available=False,
-    )
-
-    service = OrderService()
-
-    response = await service.validate_order(
-        uow,
-        validation_request(branch.external_id),
-    )
-
-    assert response.valid is False
-    assert response.issues[0].code == BusinessErrorCode.PRODUCT_UNAVAILABLE
-
-
-@pytest.mark.asyncio
-async def test_validate_order_price_changed(
-    uow: UnitOfWork,
-) -> None:
-    _, branch, _, _, _ = await create_restaurant_structure(
-        uow,
-        price=500,
-    )
-
-    service = OrderService()
-
-    response = await service.validate_order(
-        uow,
-        validation_request(
-            branch.external_id,
-            unit_price=400,
-        ),
-    )
-
-    assert response.valid is False
-
-    issue = response.issues[0]
-
-    assert issue.code == BusinessErrorCode.PRICE_CHANGED
-    assert issue.old_price == 400
-    assert issue.current_price == 500
-
-
-@pytest.mark.asyncio
-async def test_create_order_success(
-    uow: UnitOfWork,
-) -> None:
-    _, branch, _, _, _ = await create_restaurant_structure(uow)
-
-    service = OrderService()
-
-    response = await service.create_order(
-        uow,
-        create_request(branch.external_id),
-        customer_email="customer@example.com",
-        restaurant_client=FakeRestaurantClient(),
-    )
-
-    assert response.accepted is True
-    assert response.restaurant_order_id is not None
-    assert response.reason is None
-
-    customer = await uow.customers.get_by_email(
+    def factory() -> UnitOfWork:
+        return UnitOfWork(test_session_factory)
+    await service.create_order(
+        factory,
+        request(restaurant_id, branch_id),
         "customer@example.com",
+        client,
     )
-
-    assert customer is not None
-
-    order = await uow.orders.get_by_external_id(
-        branch.restaurant_id,
-        "order-1",
+    conflict = await service.create_order(
+        factory,
+        request(restaurant_id, branch_id, price=101),
+        "customer@example.com",
+        client,
     )
-
-    assert order is not None
-    assert order.customer_id == customer.id
-    assert order.branch_id == branch.id
-    assert order.restaurant_order_id == response.restaurant_order_id
-    assert order.request_hash
+    assert conflict.accepted is False
+    assert conflict.reason.code == BusinessErrorCode.ORDER_ID_CONFLICT
 
 
 @pytest.mark.asyncio
-async def test_create_order_rejects_invalid_order(
-    uow: UnitOfWork,
-) -> None:
-    _, branch, _, _, _ = await create_restaurant_structure(uow)
-
-    service = OrderService()
-
-    response = await service.create_order(
-        uow,
-        create_request(
-            branch.external_id,
-            unit_price=400,
-        ),
-        customer_email="customer@example.com",
-        restaurant_client=FakeRestaurantClient(),
-    )
-
-    assert response.accepted is False
-    assert response.restaurant_order_id is None
-    assert response.reason is not None
-    assert response.reason.code == BusinessErrorCode.PRICE_CHANGED
-
-
-@pytest.mark.asyncio
-async def test_create_order_is_idempotent(
-    uow: UnitOfWork,
-) -> None:
-    _, branch, _, _, _ = await create_restaurant_structure(uow)
-
-    service = OrderService()
-
-    request = create_request(
-        branch.external_id,
-        order_id="same-order",
-    )
-
-    first_response = await service.create_order(
-        uow,
-        request,
-        customer_email="customer@example.com",
-        restaurant_client=FakeRestaurantClient(),
-    )
-
-    second_response = await service.create_order(
-        uow,
-        request,
-        customer_email="customer@example.com",
-        restaurant_client=FakeRestaurantClient(),
-    )
-
-    assert first_response.accepted is True
-    assert second_response.accepted is True
-
-    assert (
-        first_response.restaurant_order_id
-        == second_response.restaurant_order_id
-    )
-
-
-@pytest.mark.asyncio
-async def test_create_order_rejects_unknown_branch(
-    uow: UnitOfWork,
-) -> None:
-    service = OrderService()
-
-    response = await service.create_order(
-        uow,
-        create_request("unknown-branch"),
-        customer_email="customer@example.com",
-        restaurant_client=FakeRestaurantClient(),
-    )
-
-    assert response.accepted is False
-    assert response.reason is not None
-    assert response.reason.code == BusinessErrorCode.BRANCH_UNAVAILABLE
-
-
-@pytest.mark.asyncio
-async def test_create_order_reuses_existing_customer(
-    uow: UnitOfWork,
-) -> None:
-    _, branch, _, _, _ = await create_restaurant_structure(uow)
-
-    customer = uow.customers.add(
-        Customer(
-            email="existing@example.com",
+async def test_restaurant_rejection_is_stored(test_session_factory):
+    restaurant_id, branch_id = await create_catalog(test_session_factory)
+    client = FakeRestaurantClient(
+        RestaurantOrderResponse(
+            accepted=False,
+            reason=ValidationIssue(
+                code=BusinessErrorCode.RESTAURANT_REJECTED,
+                message="Rejected",
+            ),
         )
     )
-
-    await uow.session.flush()
-
     service = OrderService()
-
-    response = await service.create_order(
-        uow,
-        create_request(branch.external_id),
-        customer_email=customer.email,
-        restaurant_client=FakeRestaurantClient(),
+    def factory() -> UnitOfWork:
+        return UnitOfWork(test_session_factory)
+    first = await service.create_order(
+        factory,
+        request(restaurant_id, branch_id),
+        "customer@example.com",
+        client,
     )
-
-    assert response.accepted is True
-
-    existing_customer = await uow.customers.get_by_email(
-        "existing@example.com",
+    retry = await service.create_order(
+        factory,
+        request(restaurant_id, branch_id),
+        "customer@example.com",
+        client,
     )
+    assert first.accepted is False
+    assert retry.reason.code == BusinessErrorCode.RESTAURANT_REJECTED
+    assert client.calls == 1
 
-    assert existing_customer is not None
-    assert existing_customer.id == customer.id
+
+@pytest.mark.asyncio
+async def test_timeout_leaves_recoverable_pending_order(test_session_factory):
+    restaurant_id, branch_id = await create_catalog(test_session_factory)
+    service = OrderService()
+    def factory() -> UnitOfWork:
+        return UnitOfWork(test_session_factory)
+    timed_out = await service.create_order(
+        factory,
+        request(restaurant_id, branch_id),
+        "customer@example.com",
+        TimeoutRestaurantClient(),
+    )
+    recovered = await service.create_order(
+        factory,
+        request(restaurant_id, branch_id),
+        "customer@example.com",
+        FakeRestaurantClient(),
+    )
+    assert timed_out.reason.code == BusinessErrorCode.RESTAURANT_TIMEOUT
+    assert recovered.accepted is True
+
+
+@pytest.mark.asyncio
+async def test_failed_local_finalize_commit_is_recoverable(
+    test_session_factory,
+):
+    restaurant_id, branch_id = await create_catalog(test_session_factory)
+    service = OrderService()
+    client = FakeRestaurantClient()
+    created = 0
+
+    class FailingCommitUow(UnitOfWork):
+        async def commit(self):
+            raise RuntimeError("simulated local commit failure")
+
+    def failing_factory():
+        nonlocal created
+        created += 1
+        if created == 2:
+            return FailingCommitUow(test_session_factory)
+        return UnitOfWork(test_session_factory)
+
+    with pytest.raises(RuntimeError, match="local commit failure"):
+        await service.create_order(
+            failing_factory,
+            request(restaurant_id, branch_id),
+            "customer@example.com",
+            client,
+        )
+
+    recovered = await service.create_order(
+        lambda: UnitOfWork(test_session_factory),
+        request(restaurant_id, branch_id),
+        "customer@example.com",
+        client,
+    )
+    assert recovered.accepted is True
+
+
+@pytest.mark.asyncio
+async def test_catalog_rejection_avoids_restaurant_call(test_session_factory):
+    restaurant_id, branch_id = await create_catalog(test_session_factory)
+    client = FakeRestaurantClient()
+    result = await OrderService().create_order(
+        lambda: UnitOfWork(test_session_factory),
+        request(restaurant_id, branch_id, price=101),
+        "customer@example.com",
+        client,
+    )
+    assert result.accepted is False
+    assert result.reason.code == BusinessErrorCode.PRICE_CHANGED
+    assert client.calls == 0

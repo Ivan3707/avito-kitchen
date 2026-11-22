@@ -8,9 +8,13 @@ from app.infrastructure.repositories.customer import CustomerRepository
 from app.infrastructure.repositories.menu import MenuRepository
 from app.infrastructure.repositories.menu_item import MenuItemRepository
 from app.infrastructure.repositories.order import OrderRepository
+from app.infrastructure.repositories.order_item import OrderItemRepository
 from app.infrastructure.repositories.restaurant import RestaurantRepository
 from app.infrastructure.repositories.restaurant_branch import (
     RestaurantBranchRepository,
+)
+from app.infrastructure.repositories.sync_snapshot import (
+    SyncSnapshotRepository,
 )
 
 
@@ -37,15 +41,19 @@ class UnitOfWork:
             self.menus = MenuRepository(self.session)
             self.menu_items = MenuItemRepository(self.session)
             self.orders = OrderRepository(self.session)
+            self.order_items = OrderItemRepository(self.session)
             self.carts = CartRepository(self.session)
             self.branch_menu_items = BranchMenuItemRepository(self.session)
+            self.sync_snapshots = SyncSnapshotRepository(self.session)
             return self
         except BaseException as exc:
             if self.session is not None:
                 try:
                     await self.session.close()
                 except BaseException as close_exc:
-                    exc.add_note(f"Additionally, session closing failed: {close_exc!r}")
+                    exc.add_note(
+                        f"Additionally, session closing failed: {close_exc!r}"
+                    )
 
             raise
 
@@ -63,8 +71,16 @@ class UnitOfWork:
             else:
                 await self.commit()
         except BaseException as transaction_exc:
+            try:
+                await self.rollback()
+            except BaseException as rollback_exc:
+                transaction_exc.add_note(
+                    f"Additionally, rollback failed: {rollback_exc!r}"
+                )
             if error is not None:
-                error.add_note(f"Additionally, transaction failed: {transaction_exc!r}")
+                error.add_note(
+                    f"Additionally, transaction failed: {transaction_exc!r}"
+                )
             else:
                 error = transaction_exc
 
@@ -72,7 +88,9 @@ class UnitOfWork:
             await self.session.close()
         except BaseException as close_exc:
             if error is not None:
-                error.add_note(f"Additionally, session closing failed: {close_exc!r}")
+                error.add_note(
+                    f"Additionally, session closing failed: {close_exc!r}"
+                )
             else:
                 raise
 
@@ -84,3 +102,6 @@ class UnitOfWork:
 
     async def rollback(self):
         await self.session.rollback()
+
+    async def flush(self):
+        await self.session.flush()

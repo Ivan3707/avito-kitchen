@@ -49,6 +49,7 @@ async def test_add_and_get_by_id(uow: UnitOfWork):
         external_order_id=f"external-{uuid4()}",
         restaurant_order_id=f"restaurant-order-{uuid4()}",
         request_hash=f"hash-{uuid4()}",
+        status="confirmed",
     )
 
     uow.orders.add(order)
@@ -80,6 +81,7 @@ async def test_get_by_external_id(uow: UnitOfWork):
         external_order_id=external_order_id,
         restaurant_order_id=f"restaurant-order-{uuid4()}",
         request_hash=f"hash-{uuid4()}",
+        status="confirmed",
     )
 
     uow.orders.add(order)
@@ -126,6 +128,7 @@ async def test_get_by_restaurant_order_id(
         external_order_id=f"external-{uuid4()}",
         restaurant_order_id=restaurant_order_id,
         request_hash=f"hash-{uuid4()}",
+        status="confirmed",
     )
 
     uow.orders.add(order)

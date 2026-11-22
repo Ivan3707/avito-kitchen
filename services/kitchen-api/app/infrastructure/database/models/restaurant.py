@@ -1,6 +1,7 @@
+from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, Integer, String, Text
+from sqlalchemy import DateTime, String, Text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -32,15 +33,13 @@ class Restaurant(TimestampMixin, Base):
         nullable=True,
     )
 
-    sync_version: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=0,
+    last_snapshot_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        nullable=True,
+        unique=True,
     )
 
-    __table_args__ = (
-        CheckConstraint(
-            "sync_version >= 0",
-            name="ck_restaurant_sync_version_non_negative",
-        ),
+    last_snapshot_generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )

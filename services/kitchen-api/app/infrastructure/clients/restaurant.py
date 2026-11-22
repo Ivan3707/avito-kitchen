@@ -1,9 +1,16 @@
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
+
+from app.integration.schemas.orders import RestaurantOrderResponse
 
 
 class RestaurantTimeoutError(Exception):
+    pass
+
+
+class RestaurantCommunicationError(Exception):
     pass
 
 
@@ -14,7 +21,7 @@ class RestaurantClient:
     async def create_order(
         self,
         payload: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> RestaurantOrderResponse:
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
@@ -25,6 +32,8 @@ class RestaurantClient:
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             raise RestaurantTimeoutError from exc
 
-        response.raise_for_status()
-
-        return response.json()
+        try:
+            response.raise_for_status()
+            return RestaurantOrderResponse.model_validate(response.json())
+        except (httpx.HTTPStatusError, ValueError, ValidationError) as exc:
+            raise RestaurantCommunicationError from exc

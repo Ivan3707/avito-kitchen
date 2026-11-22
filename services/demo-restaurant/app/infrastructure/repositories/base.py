@@ -1,6 +1,5 @@
-from uuid import UUID
-
 from typing import Generic, TypeVar
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession

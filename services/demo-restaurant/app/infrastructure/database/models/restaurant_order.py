@@ -1,9 +1,11 @@
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
     ForeignKey,
+    Integer,
     String,
     UniqueConstraint,
 )
@@ -11,8 +13,6 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.infrastructure.database.base import Base, TimestampMixin
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.infrastructure.database.models.restaurant_branch import (
@@ -37,12 +37,17 @@ class RestaurantOrder(TimestampMixin, Base):
         nullable=False,
     )
 
-    branch_id: Mapped[UUID] = mapped_column(
+    branch_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey(
             "restaurant_branches.id",
             ondelete="RESTRICT",
         ),
+        nullable=True,
+    )
+
+    branch_external_id: Mapped[str] = mapped_column(
+        String,
         nullable=False,
     )
 
@@ -61,6 +66,20 @@ class RestaurantOrder(TimestampMixin, Base):
         nullable=True,
     )
 
+    rejection_code: Mapped[str | None] = mapped_column(
+        String,
+        nullable=True,
+    )
+    rejection_menu_item_external_id: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
+    rejection_old_price: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    rejection_current_price: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+
     request_hash: Mapped[str] = mapped_column(
         String(64),
         nullable=False,
@@ -72,7 +91,7 @@ class RestaurantOrder(TimestampMixin, Base):
         cascade="all, delete-orphan",
     )
 
-    branch: Mapped["RestaurantBranch"] = relationship(
+    branch: Mapped["RestaurantBranch | None"] = relationship(
         "RestaurantBranch",
     )
 
@@ -87,12 +106,14 @@ class RestaurantOrder(TimestampMixin, Base):
                 accepted = TRUE
                 AND status != 'rejected'
                 AND rejection_reason IS NULL
+                AND rejection_code IS NULL
             )
             OR
             (
                 accepted = FALSE
                 AND status = 'rejected'
                 AND rejection_reason IS NOT NULL
+                AND rejection_code IS NOT NULL
             )
             """,
             name="ck_restaurant_order_result_consistency",

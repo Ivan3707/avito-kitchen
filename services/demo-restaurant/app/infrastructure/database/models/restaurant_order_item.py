@@ -1,3 +1,4 @@
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -11,11 +12,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.infrastructure.database.base import Base, TimestampMixin
 
-from typing import TYPE_CHECKING
-
 if TYPE_CHECKING:
     from app.infrastructure.database.models.menu_item import MenuItem
-    from app.infrastructure.database.models.restaurant_order import RestaurantOrder
+    from app.infrastructure.database.models.restaurant_order import (
+        RestaurantOrder,
+    )
 
 
 class RestaurantOrderItem(TimestampMixin, Base):

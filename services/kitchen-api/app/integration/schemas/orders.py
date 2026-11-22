@@ -12,8 +12,16 @@ class OrderItemRequest(BaseModel):
 
 
 class OrderValidationRequest(BaseModel):
+    restaurant_external_id: NonEmptyString
     branch_external_id: NonEmptyString
     items: list[OrderItemRequest] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_unique_items(self) -> "OrderValidationRequest":
+        item_ids = [item.menu_item_external_id for item in self.items]
+        if len(item_ids) != len(set(item_ids)):
+            raise ValueError("menu item external_id values must be unique")
+        return self
 
 
 class ValidationIssue(BaseModel):
@@ -85,8 +93,16 @@ class OrderValidationResponse(BaseModel):
 
 class CreateOrderRequest(BaseModel):
     order_id: NonEmptyString
+    restaurant_external_id: NonEmptyString
     branch_external_id: NonEmptyString
     items: list[OrderItemRequest] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_unique_items(self) -> "CreateOrderRequest":
+        item_ids = [item.menu_item_external_id for item in self.items]
+        if len(item_ids) != len(set(item_ids)):
+            raise ValueError("menu item external_id values must be unique")
+        return self
 
 
 class CreateOrderResponse(BaseModel):
@@ -115,4 +131,22 @@ class CreateOrderResponse(BaseModel):
                     "rejected response cannot contain restaurant_order_id"
                 )
 
+        return self
+
+
+class RestaurantOrderResponse(BaseModel):
+    accepted: bool
+    restaurant_order_id: NonEmptyString | None = None
+    reason: ValidationIssue | None = None
+
+    @model_validator(mode="after")
+    def validate_result(self) -> "RestaurantOrderResponse":
+        if self.accepted and (
+            self.restaurant_order_id is None or self.reason is not None
+        ):
+            raise ValueError("accepted order requires id and no reason")
+        if not self.accepted and (
+            self.restaurant_order_id is not None or self.reason is None
+        ):
+            raise ValueError("rejected order requires reason and no id")
         return self

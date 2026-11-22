@@ -21,7 +21,6 @@ async def test_get_by_branch_and_menu_item_returns_branch_menu_item(
             external_id=f"restaurant-{uuid4()}",
             name="Test Restaurant",
             description="Test description",
-            sync_version=1,
         )
     )
 
@@ -104,7 +103,6 @@ async def test_get_with_menu_item_loads_related_menu_item(
             external_id=f"restaurant-{uuid4()}",
             name="Test Restaurant",
             description="Test description",
-            sync_version=1,
         )
     )
 
