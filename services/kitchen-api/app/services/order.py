@@ -260,6 +260,7 @@ class OrderService:
         if order.status == "rejected":
             return CreateOrderResponse(
                 accepted=False,
+                order_id=order.id,
                 reason=ValidationIssue(
                     code=BusinessErrorCode(order.rejection_code),
                     message=order.rejection_message,

@@ -110,8 +110,10 @@ async def test_create_order_and_retry_are_idempotent(test_session_factory):
     restaurant_id, branch_id = await create_catalog(test_session_factory)
     client = FakeRestaurantClient()
     service = OrderService()
+
     def uow_factory() -> UnitOfWork:
         return UnitOfWork(test_session_factory)
+
     order_request = request(restaurant_id, branch_id)
     first = await service.create_order(
         uow_factory, order_request, "customer@example.com", client
@@ -131,8 +133,10 @@ async def test_same_order_id_with_other_payload_is_rejected(
     restaurant_id, branch_id = await create_catalog(test_session_factory)
     client = FakeRestaurantClient()
     service = OrderService()
+
     def factory() -> UnitOfWork:
         return UnitOfWork(test_session_factory)
+
     await service.create_order(
         factory,
         request(restaurant_id, branch_id),
@@ -162,8 +166,10 @@ async def test_restaurant_rejection_is_stored(test_session_factory):
         )
     )
     service = OrderService()
+
     def factory() -> UnitOfWork:
         return UnitOfWork(test_session_factory)
+
     first = await service.create_order(
         factory,
         request(restaurant_id, branch_id),
@@ -177,7 +183,8 @@ async def test_restaurant_rejection_is_stored(test_session_factory):
         client,
     )
     assert first.accepted is False
-    assert retry.reason.code == BusinessErrorCode.RESTAURANT_REJECTED
+    assert first.order_id is not None
+    assert retry == first
     assert client.calls == 1
 
 
@@ -185,8 +192,10 @@ async def test_restaurant_rejection_is_stored(test_session_factory):
 async def test_timeout_leaves_recoverable_pending_order(test_session_factory):
     restaurant_id, branch_id = await create_catalog(test_session_factory)
     service = OrderService()
+
     def factory() -> UnitOfWork:
         return UnitOfWork(test_session_factory)
+
     timed_out = await service.create_order(
         factory,
         request(restaurant_id, branch_id),
