@@ -30,6 +30,7 @@ def test_valid_order_item():
 
 def test_valid_order_validation_request():
     request = OrderValidationRequest(
+        restaurant_external_id="restaurant-1",
         branch_external_id="branch-center",
         items=[
             OrderItemRequest(
@@ -138,6 +139,7 @@ def test_valid_order_validation_response_without_issues():
 def test_valid_create_order_request():
     request = CreateOrderRequest(
         order_id="order-123",
+        restaurant_external_id="restaurant-1",
         branch_external_id="branch-center",
         items=[
             OrderItemRequest(
@@ -248,6 +250,7 @@ def test_order_item_rejects_negative_unit_price():
 def test_order_validation_request_rejects_empty_branch_external_id():
     with pytest.raises(ValidationError) as exc_info:
         OrderValidationRequest(
+            restaurant_external_id="restaurant-1",
             branch_external_id="",
             items=[],
         )
@@ -394,6 +397,7 @@ def test_create_order_request_rejects_empty_order_id():
     with pytest.raises(ValidationError) as exc_info:
         CreateOrderRequest(
             order_id="",
+            restaurant_external_id="restaurant-1",
             branch_external_id="branch-center",
             items=[],
         )
@@ -405,6 +409,7 @@ def test_create_order_request_rejects_empty_branch_external_id():
     with pytest.raises(ValidationError) as exc_info:
         CreateOrderRequest(
             order_id="order-123",
+            restaurant_external_id="restaurant-1",
             branch_external_id="",
             items=[],
         )

@@ -4,15 +4,14 @@ from app.infrastructure.repositories.branch_menu_item import (
     BranchMenuItemRepository,
 )
 from app.infrastructure.repositories.menu_item import MenuItemRepository
-from app.infrastructure.repositories.restaurant_order_item import (
-    RestaurantOrderItemRepository,
+from app.infrastructure.repositories.restaurant_branch import (
+    RestaurantBranchRepository,
 )
 from app.infrastructure.repositories.restaurant_order import (
     RestaurantOrderRepository,
 )
-
-from app.infrastructure.repositories.restaurant_branch import (
-    RestaurantBranchRepository,
+from app.infrastructure.repositories.restaurant_order_item import (
+    RestaurantOrderItemRepository,
 )
 
 
@@ -20,9 +19,11 @@ class UnitOfWork:
     def __init__(
         self,
         session_factory: async_sessionmaker[AsyncSession],
+        isolation_level: str | None = None,
     ):
         self.session: AsyncSession | None = None
         self.session_factory = session_factory
+        self.isolation_level = isolation_level
         self._entered = False
 
     async def __aenter__(self):
@@ -30,20 +31,35 @@ class UnitOfWork:
             raise RuntimeError("UnitOfWork cannot be entered more than once")
 
         self._entered = True
+
         try:
             self.session = self.session_factory()
+
+            if self.isolation_level is not None:
+                await self.session.connection(
+                    execution_options={
+                        "isolation_level": self.isolation_level,
+                    }
+                )
+
             self.restaurant_branches = RestaurantBranchRepository(self.session)
             self.menu_items = MenuItemRepository(self.session)
             self.branch_menu_items = BranchMenuItemRepository(self.session)
             self.restaurant_orders = RestaurantOrderRepository(self.session)
-            self.restaurant_order_items = RestaurantOrderItemRepository(self.session)
+            self.restaurant_order_items = RestaurantOrderItemRepository(
+                self.session
+            )
+
             return self
+
         except BaseException as exc:
             if self.session is not None:
                 try:
                     await self.session.close()
                 except BaseException as close_exc:
-                    exc.add_note(f"Additionally, session closing failed: {close_exc!r}")
+                    exc.add_note(
+                        f"Additionally, session closing failed: {close_exc!r}"
+                    )
 
             raise
 
@@ -61,8 +77,16 @@ class UnitOfWork:
             else:
                 await self.commit()
         except BaseException as transaction_exc:
+            try:
+                await self.rollback()
+            except BaseException as rollback_exc:
+                transaction_exc.add_note(
+                    f"Additionally, rollback failed: {rollback_exc!r}"
+                )
             if error is not None:
-                error.add_note(f"Additionally, transaction failed: {transaction_exc!r}")
+                error.add_note(
+                    f"Additionally, transaction failed: {transaction_exc!r}"
+                )
             else:
                 error = transaction_exc
 
@@ -70,7 +94,9 @@ class UnitOfWork:
             await self.session.close()
         except BaseException as close_exc:
             if error is not None:
-                error.add_note(f"Additionally, session closing failed: {close_exc!r}")
+                error.add_note(
+                    f"Additionally, session closing failed: {close_exc!r}"
+                )
             else:
                 raise
 
@@ -82,3 +108,6 @@ class UnitOfWork:
 
     async def rollback(self):
         await self.session.rollback()
+
+    async def flush(self):
+        await self.session.flush()

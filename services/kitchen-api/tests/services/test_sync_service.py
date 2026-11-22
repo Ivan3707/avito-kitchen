@@ -1,246 +1,259 @@
+import asyncio
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 
 from app.infrastructure.unit_of_work import UnitOfWork
-from app.integration.schemas.sync import (
-    BranchAvailabilitySync,
-    BranchSync,
-    MenuItemAvailabilitySync,
-    MenuItemSync,
-    MenuSync,
-    RestaurantSync,
-    SyncPayload,
-)
+from app.integration.schemas.sync import SyncPayload
 from app.services.sync import SyncService
 
 
 def make_payload(
     *,
-    version: int,
     restaurant_external_id: str,
-    branch_external_id: str,
-    menu_external_id: str,
-    menu_item_external_id: str,
+    generated_at: datetime,
+    snapshot_id=None,
+    branch_version: int = 1,
+    include_branch: bool = True,
+    branch_active: bool = True,
 ) -> SyncPayload:
-    return SyncPayload(
-        version=version,
-        restaurant=RestaurantSync(
-            external_id=restaurant_external_id,
-            name="Test Restaurant",
-            description="Test description",
-        ),
-        branches=[
-            BranchSync(
-                external_id=branch_external_id,
-                name="Test Branch",
-                address="Test address",
-                is_active=True,
-                is_accepting_orders=True,
-            )
-        ],
-        menu=MenuSync(
-            external_id=menu_external_id,
-            name="Test Menu",
-            items=[
-                MenuItemSync(
-                    external_id=menu_item_external_id,
-                    name="Test Item",
-                    description="Test item",
-                    price=500,
-                    is_active=True,
-                )
-            ],
-        ),
-        availability=[
-            BranchAvailabilitySync(
-                branch_external_id=branch_external_id,
-                items=[
-                    MenuItemAvailabilitySync(
-                        menu_item_external_id=menu_item_external_id,
-                        is_available=True,
-                    )
+    branch_id = "branch-1"
+    item_id = "item-1"
+    return SyncPayload.model_validate(
+        {
+            "snapshot_id": snapshot_id or uuid4(),
+            "schema_version": 1,
+            "generated_at": generated_at,
+            "restaurant": {
+                "external_id": restaurant_external_id,
+                "name": "Restaurant",
+                "description": None,
+            },
+            "branches": (
+                [
+                    {
+                        "external_id": branch_id,
+                        "name": "Branch",
+                        "address": "Address",
+                        "is_active": branch_active,
+                        "is_accepting_orders": branch_active,
+                        "branch_version": branch_version,
+                    }
+                ]
+                if include_branch
+                else []
+            ),
+            "menu": {
+                "external_id": "menu-1",
+                "name": "Menu",
+                "items": [
+                    {
+                        "external_id": item_id,
+                        "name": "Item",
+                        "description": None,
+                        "price": 100,
+                        "is_active": True,
+                    }
                 ],
-            )
-        ],
+            },
+            "availability": (
+                [
+                    {
+                        "branch_external_id": branch_id,
+                        "items": [
+                            {
+                                "menu_item_external_id": item_id,
+                                "is_available": branch_active,
+                            }
+                        ],
+                    }
+                ]
+                if include_branch
+                else []
+            ),
+        }
     )
 
 
 @pytest.mark.asyncio
-async def test_sync_creates_full_restaurant_structure(
-    uow: UnitOfWork,
-) -> None:
-    restaurant_external_id = f"restaurant-{uuid4()}"
-    branch_external_id = f"branch-{uuid4()}"
-    menu_external_id = f"menu-{uuid4()}"
-    menu_item_external_id = f"item-{uuid4()}"
-
+async def test_full_sync_and_duplicate_snapshot(uow: UnitOfWork) -> None:
+    external_id = f"restaurant-{uuid4()}"
     payload = make_payload(
-        version=1,
-        restaurant_external_id=restaurant_external_id,
-        branch_external_id=branch_external_id,
-        menu_external_id=menu_external_id,
-        menu_item_external_id=menu_item_external_id,
+        restaurant_external_id=external_id,
+        generated_at=datetime.now(UTC),
     )
-
     service = SyncService()
-
-    response = await service.sync(
-        uow=uow,
-        payload=payload,
-    )
-
-    assert response.status == "updated"
-    assert response.version == 1
-
-    restaurant = await uow.restaurants.get_by_external_id(
-        restaurant_external_id,
-    )
-
-    assert restaurant is not None
-    assert restaurant.name == "Test Restaurant"
-    assert restaurant.description == "Test description"
-    assert restaurant.sync_version == 1
-
-    branch = await uow.restaurant_branches.get_by_restaurant_and_external_id(
-        restaurant.id,
-        branch_external_id,
-    )
-
-    assert branch is not None
-    assert branch.name == "Test Branch"
-    assert branch.address == "Test address"
-    assert branch.is_active is True
-    assert branch.is_accepting_orders is True
-
-    menu = await uow.menus.get_by_restaurant_id(
-        restaurant.id,
-    )
-
-    assert menu is not None
-    assert menu.external_id == menu_external_id
-    assert menu.name == "Test Menu"
-
-    menu_item = await uow.menu_items.get_by_menu_and_external_id(
-        menu.id,
-        menu_item_external_id,
-    )
-
-    assert menu_item is not None
-    assert menu_item.name == "Test Item"
-    assert menu_item.price == 500
-    assert menu_item.is_active is True
-
-    branch_menu_item = await uow.branch_menu_items.get_by_branch_and_menu_item(
-        branch.id,
-        menu_item.id,
-    )
-
-    assert branch_menu_item is not None
-    assert branch_menu_item.is_available is True
+    first = await service.sync(uow, payload)
+    duplicate = await service.sync(uow, payload)
+    assert first.status == "updated"
+    assert duplicate.status == "ignored"
+    assert duplicate.reason == "DUPLICATE_SNAPSHOT"
 
 
 @pytest.mark.asyncio
-async def test_sync_ignores_outdated_version(
+async def test_stale_snapshot_does_not_overwrite_newer(
     uow: UnitOfWork,
 ) -> None:
-    restaurant_external_id = f"restaurant-{uuid4()}"
-    branch_external_id = f"branch-{uuid4()}"
-    menu_external_id = f"menu-{uuid4()}"
-    menu_item_external_id = f"item-{uuid4()}"
-
+    external_id = f"restaurant-{uuid4()}"
+    now = datetime.now(UTC)
     service = SyncService()
-
-    first_payload = make_payload(
-        version=2,
-        restaurant_external_id=restaurant_external_id,
-        branch_external_id=branch_external_id,
-        menu_external_id=menu_external_id,
-        menu_item_external_id=menu_item_external_id,
-    )
-
-    first_response = await service.sync(
-        uow=uow,
-        payload=first_payload,
-    )
-
-    assert first_response.status == "updated"
-
-    outdated_payload = make_payload(
-        version=1,
-        restaurant_external_id=restaurant_external_id,
-        branch_external_id=branch_external_id,
-        menu_external_id=menu_external_id,
-        menu_item_external_id=menu_item_external_id,
-    )
-
-    outdated_payload.restaurant.name = "Changed Restaurant"
-
-    response = await service.sync(
-        uow=uow,
-        payload=outdated_payload,
-    )
-
-    assert response.status == "ignored"
-    assert response.version == 2
-
-    restaurant = await uow.restaurants.get_by_external_id(
-        restaurant_external_id,
-    )
-
-    assert restaurant is not None
-    assert restaurant.name == "Test Restaurant"
-    assert restaurant.sync_version == 2
-
-
-@pytest.mark.asyncio
-async def test_sync_updates_existing_restaurant(
-    uow: UnitOfWork,
-) -> None:
-    restaurant_external_id = f"restaurant-{uuid4()}"
-    branch_external_id = f"branch-{uuid4()}"
-    menu_external_id = f"menu-{uuid4()}"
-    menu_item_external_id = f"item-{uuid4()}"
-
-    service = SyncService()
-
-    first_payload = make_payload(
-        version=1,
-        restaurant_external_id=restaurant_external_id,
-        branch_external_id=branch_external_id,
-        menu_external_id=menu_external_id,
-        menu_item_external_id=menu_item_external_id,
-    )
-
     await service.sync(
-        uow=uow,
-        payload=first_payload,
+        uow,
+        make_payload(
+            restaurant_external_id=external_id,
+            generated_at=now,
+            branch_version=2,
+        ),
     )
-
-    updated_payload = make_payload(
-        version=2,
-        restaurant_external_id=restaurant_external_id,
-        branch_external_id=branch_external_id,
-        menu_external_id=menu_external_id,
-        menu_item_external_id=menu_item_external_id,
+    stale = await service.sync(
+        uow,
+        make_payload(
+            restaurant_external_id=external_id,
+            generated_at=now - timedelta(seconds=1),
+            branch_version=1,
+        ),
     )
+    assert stale.status == "ignored"
+    assert stale.reason == "STALE_SNAPSHOT"
 
-    updated_payload.restaurant.name = "Updated Restaurant"
-    updated_payload.restaurant.description = "Updated description"
 
-    response = await service.sync(
-        uow=uow,
-        payload=updated_payload,
+@pytest.mark.asyncio
+async def test_branch_version_cannot_regress(uow: UnitOfWork) -> None:
+    external_id = f"restaurant-{uuid4()}"
+    now = datetime.now(UTC)
+    service = SyncService()
+    await service.sync(
+        uow,
+        make_payload(
+            restaurant_external_id=external_id,
+            generated_at=now,
+            branch_version=4,
+        ),
     )
-
-    assert response.status == "updated"
-    assert response.version == 2
-
-    restaurant = await uow.restaurants.get_by_external_id(
-        restaurant_external_id,
+    stale = await service.sync(
+        uow,
+        make_payload(
+            restaurant_external_id=external_id,
+            generated_at=now + timedelta(seconds=1),
+            branch_version=3,
+        ),
     )
+    assert stale.status == "ignored"
 
-    assert restaurant is not None
-    assert restaurant.name == "Updated Restaurant"
-    assert restaurant.description == "Updated description"
-    assert restaurant.sync_version == 2
+
+@pytest.mark.asyncio
+async def test_missing_branch_is_deactivated(uow: UnitOfWork) -> None:
+    external_id = f"restaurant-{uuid4()}"
+    now = datetime.now(UTC)
+    service = SyncService()
+    await service.sync(
+        uow,
+        make_payload(
+            restaurant_external_id=external_id,
+            generated_at=now,
+        ),
+    )
+    await service.sync(
+        uow,
+        make_payload(
+            restaurant_external_id=external_id,
+            generated_at=now + timedelta(seconds=1),
+            include_branch=False,
+        ),
+    )
+    restaurant = await uow.restaurants.get_by_external_id(external_id)
+    branches = await uow.restaurant_branches.get_by_restaurant_id(
+        restaurant.id
+    )
+    relations = await uow.branch_menu_items.get_all_by_branch(branches[0].id)
+    assert branches[0].is_active is False
+    assert all(not relation.is_available for relation in relations)
+
+
+@pytest.mark.asyncio
+async def test_explicitly_deactivated_branch_disables_availability(
+    uow: UnitOfWork,
+) -> None:
+    external_id = f"restaurant-{uuid4()}"
+    now = datetime.now(UTC)
+    service = SyncService()
+    await service.sync(
+        uow,
+        make_payload(
+            restaurant_external_id=external_id,
+            generated_at=now,
+        ),
+    )
+    await service.sync(
+        uow,
+        make_payload(
+            restaurant_external_id=external_id,
+            generated_at=now + timedelta(seconds=1),
+            branch_version=2,
+            branch_active=False,
+        ),
+    )
+    restaurant = await uow.restaurants.get_by_external_id(external_id)
+    branches = await uow.restaurant_branches.get_by_restaurant_id(
+        restaurant.id
+    )
+    relations = await uow.branch_menu_items.get_all_by_branch(branches[0].id)
+    assert branches[0].is_active is False
+    assert branches[0].is_accepting_orders is False
+    assert all(not relation.is_available for relation in relations)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_snapshots_leave_newest_state(
+    test_session_factory,
+) -> None:
+    external_id = f"restaurant-{uuid4()}"
+    now = datetime.now(UTC)
+    service = SyncService()
+
+    async def apply(payload):
+        async with UnitOfWork(test_session_factory) as local_uow:
+            return await service.sync(local_uow, payload)
+
+    await asyncio.gather(
+        apply(
+            make_payload(
+                restaurant_external_id=external_id,
+                generated_at=now,
+                branch_version=1,
+            )
+        ),
+        apply(
+            make_payload(
+                restaurant_external_id=external_id,
+                generated_at=now + timedelta(seconds=1),
+                branch_version=2,
+            )
+        ),
+    )
+    async with UnitOfWork(test_session_factory) as check_uow:
+        restaurant = await check_uow.restaurants.get_by_external_id(
+            external_id
+        )
+        branches = await check_uow.restaurant_branches.get_by_restaurant_id(
+            restaurant.id
+        )
+        assert branches[0].branch_version == 2
+
+
+@pytest.mark.asyncio
+async def test_sync_rolls_back_on_error(test_session_factory) -> None:
+    external_id = f"restaurant-{uuid4()}"
+    payload = make_payload(
+        restaurant_external_id=external_id,
+        generated_at=datetime.now(UTC),
+    )
+    with pytest.raises(RuntimeError):
+        async with UnitOfWork(test_session_factory) as local_uow:
+            await SyncService().sync(local_uow, payload)
+            raise RuntimeError("fail after synchronization")
+    async with UnitOfWork(test_session_factory) as check_uow:
+        assert (
+            await check_uow.restaurants.get_by_external_id(external_id) is None
+        )

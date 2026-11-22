@@ -1,14 +1,11 @@
-
 from unittest.mock import AsyncMock
-
-from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.database.models.restaurant import Restaurant
 from app.infrastructure.unit_of_work import UnitOfWork
-
 
 
 @pytest.mark.asyncio
@@ -67,6 +64,7 @@ async def test_unit_of_work_rolls_back_on_exception(
 
         assert saved_restaurant is None
 
+
 @pytest.mark.asyncio
 async def test_unit_of_work_preserves_original_error_on_rollback_failure():
     session = AsyncMock(spec=AsyncSession)
@@ -76,16 +74,16 @@ async def test_unit_of_work_preserves_original_error_on_rollback_failure():
 
     uow = UnitOfWork(lambda: session)
 
-    with pytest.raises(ValueError, match="business operation failed") as exc_info:
+    with pytest.raises(
+        ValueError, match="business operation failed"
+    ) as exc_info:
         async with uow:
             raise original_error
 
     assert exc_info.value is original_error
-    assert any(
-        "rollback failed" in note
-        for note in exc_info.value.__notes__
-    )
+    assert any("rollback failed" in note for note in exc_info.value.__notes__)
     session.close.assert_awaited_once()
+
 
 @pytest.mark.asyncio
 async def test_unit_of_work_preserves_commit_error_on_close_failure():
@@ -101,10 +99,7 @@ async def test_unit_of_work_preserves_commit_error_on_close_failure():
             pass
 
     assert exc_info.value is commit_error
-    assert any(
-        "close failed" in note
-        for note in exc_info.value.__notes__
-    )
+    assert any("close failed" in note for note in exc_info.value.__notes__)
     session.close.assert_awaited_once()
 
 

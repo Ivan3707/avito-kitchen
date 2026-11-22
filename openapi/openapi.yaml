@@ -228,9 +228,10 @@ paths:
       description: |
         Accepts a full snapshot of the restaurant catalog.
 
-        The version field is used for optimistic synchronization.
-        A snapshot with a version less than or equal to the current
-        stored version is ignored.
+        snapshot_id identifies one immutable full snapshot. schema_version
+        identifies the wire format. generated_at orders complete snapshots,
+        while branch_version prevents an older branch state from replacing
+        a newer one. Duplicate and stale snapshots are ignored atomically.
 
         The snapshot contains:
         - restaurant information;
@@ -379,6 +380,8 @@ components:
         - INSUFFICIENT_QUANTITY
         - PRICE_CHANGED
         - RESTAURANT_TIMEOUT
+        - RESTAURANT_REJECTED
+        - ORDER_ID_CONFLICT
 
     # ==========================================================
     # CATALOG RESPONSE SCHEMAS
@@ -600,8 +603,8 @@ components:
     SyncStatus:
       type: string
       enum:
-        - UPDATED
-        - IGNORED
+        - updated
+        - ignored
 
     RestaurantSync:
       type: object
@@ -629,6 +632,7 @@ components:
         - address
         - is_active
         - is_accepting_orders
+        - branch_version
       properties:
         external_id:
           $ref: "#/components/schemas/NonEmptyString"
@@ -644,6 +648,10 @@ components:
 
         is_accepting_orders:
           type: boolean
+
+        branch_version:
+          type: integer
+          minimum: 1
 
     MenuItemSync:
       type: object
@@ -719,22 +727,31 @@ components:
     SyncPayload:
       type: object
       required:
-        - version
+        - snapshot_id
+        - schema_version
+        - generated_at
         - restaurant
         - branches
         - menu
         - availability
       properties:
-        version:
+        snapshot_id:
+          type: string
+          format: uuid
+
+        schema_version:
           type: integer
-          minimum: 1
+          enum: [1]
+
+        generated_at:
+          type: string
+          format: date-time
 
         restaurant:
           $ref: "#/components/schemas/RestaurantSync"
 
         branches:
           type: array
-          minItems: 1
           items:
             $ref: "#/components/schemas/BranchSync"
 
@@ -743,7 +760,6 @@ components:
 
         availability:
           type: array
-          minItems: 1
           items:
             $ref: "#/components/schemas/BranchAvailabilitySync"
 
@@ -751,37 +767,38 @@ components:
       type: object
       required:
         - status
-        - version
+        - snapshot_id
       properties:
         status:
           type: string
           enum:
-            - UPDATED
+            - updated
 
-        version:
-          type: integer
-          minimum: 1
+        snapshot_id:
+          type: string
+          format: uuid
 
     IgnoredSyncResponse:
       type: object
       required:
         - status
-        - version
+        - snapshot_id
         - reason
       properties:
         status:
           type: string
           enum:
-            - IGNORED
+            - ignored
 
-        version:
-          type: integer
-          minimum: 1
+        snapshot_id:
+          type: string
+          format: uuid
 
         reason:
           type: string
           enum:
-            - OUTDATED_VERSION
+            - DUPLICATE_SNAPSHOT
+            - STALE_SNAPSHOT
 
     SyncResponse:
       oneOf:
@@ -790,8 +807,8 @@ components:
       discriminator:
         propertyName: status
         mapping:
-          UPDATED: "#/components/schemas/UpdatedSyncResponse"
-          IGNORED: "#/components/schemas/IgnoredSyncResponse"
+          updated: "#/components/schemas/UpdatedSyncResponse"
+          ignored: "#/components/schemas/IgnoredSyncResponse"
 
     # ==========================================================
     # ORDER REQUEST SCHEMAS
@@ -818,9 +835,13 @@ components:
     OrderValidationRequest:
       type: object
       required:
+        - restaurant_external_id
         - branch_external_id
         - items
       properties:
+        restaurant_external_id:
+          $ref: "#/components/schemas/NonEmptyString"
+
         branch_external_id:
           $ref: "#/components/schemas/NonEmptyString"
 
@@ -834,10 +855,14 @@ components:
       type: object
       required:
         - order_id
+        - restaurant_external_id
         - branch_external_id
         - items
       properties:
         order_id:
+          $ref: "#/components/schemas/NonEmptyString"
+
+        restaurant_external_id:
           $ref: "#/components/schemas/NonEmptyString"
 
         branch_external_id:

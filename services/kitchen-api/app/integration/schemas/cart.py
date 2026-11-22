@@ -24,7 +24,7 @@ class CartItemResponse(BaseModel):
 
 
 class CartResponse(BaseModel):
-    id: UUID
+    id: UUID | None
     branch_id: UUID
     items: list[CartItemResponse]
 

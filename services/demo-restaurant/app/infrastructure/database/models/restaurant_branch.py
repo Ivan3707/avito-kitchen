@@ -3,6 +3,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Integer,
     String,
     UniqueConstraint,
 )
@@ -45,6 +46,12 @@ class RestaurantBranch(TimestampMixin, Base):
         Boolean,
         nullable=False,
     )
+    branch_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
+    )
 
     __table_args__ = (
         UniqueConstraint(
@@ -54,5 +61,9 @@ class RestaurantBranch(TimestampMixin, Base):
         CheckConstraint(
             "is_active OR NOT is_accepting_orders",
             name="ck_branch_accepting_requires_active",
+        ),
+        CheckConstraint(
+            "branch_version >= 1",
+            name="ck_restaurant_branch_version_positive",
         ),
     )

@@ -10,6 +10,7 @@ from app.infrastructure.database.models.restaurant import Restaurant
 from app.infrastructure.database.models.restaurant_branch import (
     RestaurantBranch,
 )
+from app.infrastructure.database.models.sync_snapshot import SyncSnapshot
 
 __all__ = [
     "BranchMenuItem",
@@ -22,4 +23,5 @@ __all__ = [
     "OrderItem",
     "Restaurant",
     "RestaurantBranch",
+    "SyncSnapshot",
 ]

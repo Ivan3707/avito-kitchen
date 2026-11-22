@@ -1,22 +1,35 @@
+from datetime import datetime
 from typing import Annotated, Literal
+from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from .common import NonEmptyString, SyncStatus
 
 
-class RestaurantSync(BaseModel):
+class SyncSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class RestaurantSync(SyncSchema):
     external_id: NonEmptyString
     name: NonEmptyString
     description: str | None
 
 
-class BranchSync(BaseModel):
+class BranchSync(SyncSchema):
     external_id: NonEmptyString
     name: NonEmptyString
     address: NonEmptyString
     is_active: bool
     is_accepting_orders: bool
+    branch_version: int = Field(ge=1)
 
     @model_validator(mode="after")
     def validate_order_acceptance(self) -> "BranchSync":
@@ -26,7 +39,7 @@ class BranchSync(BaseModel):
         return self
 
 
-class MenuItemSync(BaseModel):
+class MenuItemSync(SyncSchema):
     external_id: NonEmptyString
     name: NonEmptyString
     description: str | None
@@ -34,7 +47,7 @@ class MenuItemSync(BaseModel):
     is_active: bool
 
 
-class MenuSync(BaseModel):
+class MenuSync(SyncSchema):
     external_id: NonEmptyString
     name: NonEmptyString
     items: list[MenuItemSync]
@@ -49,12 +62,12 @@ class MenuSync(BaseModel):
         return self
 
 
-class MenuItemAvailabilitySync(BaseModel):
+class MenuItemAvailabilitySync(SyncSchema):
     menu_item_external_id: NonEmptyString
     is_available: bool
 
 
-class BranchAvailabilitySync(BaseModel):
+class BranchAvailabilitySync(SyncSchema):
     branch_external_id: NonEmptyString
     items: list[MenuItemAvailabilitySync]
 
@@ -71,12 +84,22 @@ class BranchAvailabilitySync(BaseModel):
         return self
 
 
-class SyncPayload(BaseModel):
-    version: int = Field(ge=1)
+class SyncPayload(SyncSchema):
+    snapshot_id: UUID
+    schema_version: Literal[1]
+    generated_at: datetime
+
     restaurant: RestaurantSync
-    branches: list[BranchSync] = Field(min_length=1)
+    branches: list[BranchSync]
     menu: MenuSync
-    availability: list[BranchAvailabilitySync] = Field(min_length=1)
+    availability: list[BranchAvailabilitySync]
+
+    @field_validator("generated_at")
+    @classmethod
+    def validate_generated_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("generated_at must be timezone-aware")
+        return value
 
     @model_validator(mode="after")
     def validate_cross_references(self) -> "SyncPayload":
@@ -102,6 +125,12 @@ class SyncPayload(BaseModel):
             )
 
         menu_item_ids = {item.external_id for item in self.menu.items}
+        active_menu_items = {
+            item.external_id: item.is_active for item in self.menu.items
+        }
+        active_branches = {
+            branch.external_id: branch.is_active for branch in self.branches
+        }
 
         for branch_availability in self.availability:
             if branch_availability.branch_external_id not in branch_ids_set:
@@ -118,17 +147,37 @@ class SyncPayload(BaseModel):
                     "for every branch exactly once"
                 )
 
+            for item in branch_availability.items:
+                if (
+                    item.is_available
+                    and not active_branches[
+                        branch_availability.branch_external_id
+                    ]
+                ):
+                    raise ValueError(
+                        "inactive branch cannot have available menu items"
+                    )
+                if (
+                    item.is_available
+                    and not active_menu_items[item.menu_item_external_id]
+                ):
+                    raise ValueError(
+                        "inactive menu item cannot be available in any branch"
+                    )
+
         return self
 
 
 class UpdatedSyncResponse(BaseModel):
     status: Literal["updated"] = SyncStatus.UPDATED
-    version: int = Field(ge=1)
+    snapshot_id: UUID
 
 
 class IgnoredSyncResponse(BaseModel):
     status: Literal["ignored"] = SyncStatus.IGNORED
-    version: int = Field(ge=1)
+    snapshot_id: UUID
+    reason: Literal["DUPLICATE_SNAPSHOT", "STALE_SNAPSHOT"]
+
 
 SyncResponse = Annotated[
     UpdatedSyncResponse | IgnoredSyncResponse,

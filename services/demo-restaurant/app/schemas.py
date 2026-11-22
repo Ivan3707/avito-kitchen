@@ -1,8 +1,15 @@
+from datetime import datetime
+from enum import StrEnum
+from typing import Annotated, Literal
+from uuid import UUID
 
-from typing import Annotated
-
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 NonEmptyString = Annotated[str, Field(min_length=1)]
 
@@ -22,10 +29,53 @@ class RestaurantOrder(StrictSchema):
     branch_external_id: NonEmptyString
     items: list[OrderItem] = Field(min_length=1)
 
+    @model_validator(mode="after")
+    def validate_unique_items(self) -> "RestaurantOrder":
+        item_ids = [item.menu_item_external_id for item in self.items]
+        if len(item_ids) != len(set(item_ids)):
+            raise ValueError("menu item external_id values must be unique")
+        return self
+
+
+class BusinessErrorCode(StrEnum):
+    BRANCH_UNAVAILABLE = "BRANCH_UNAVAILABLE"
+    PRODUCT_NOT_FOUND = "PRODUCT_NOT_FOUND"
+    PRODUCT_UNAVAILABLE = "PRODUCT_UNAVAILABLE"
+    PRICE_CHANGED = "PRICE_CHANGED"
+    ORDER_ID_CONFLICT = "ORDER_ID_CONFLICT"
+    RESTAURANT_REJECTED = "RESTAURANT_REJECTED"
+
+
+class ValidationIssue(StrictSchema):
+    code: BusinessErrorCode
+    message: NonEmptyString
+    menu_item_external_id: NonEmptyString | None = None
+    old_price: int | None = Field(default=None, gt=0)
+    current_price: int | None = Field(default=None, gt=0)
+
+
+class RestaurantOrderResponse(StrictSchema):
+    accepted: bool
+    restaurant_order_id: UUID | None = None
+    reason: ValidationIssue | None = None
+
+    @model_validator(mode="after")
+    def validate_result(self) -> "RestaurantOrderResponse":
+        if self.accepted and (
+            self.restaurant_order_id is None or self.reason is not None
+        ):
+            raise ValueError("accepted order requires id and no reason")
+        if not self.accepted and (
+            self.restaurant_order_id is not None or self.reason is None
+        ):
+            raise ValueError("rejected order requires reason and no id")
+        return self
+
 
 class SyncResponse(StrictSchema):
-    status: NonEmptyString
-    reason: str | None = None
+    status: Literal["updated", "ignored"]
+    snapshot_id: UUID
+    reason: Literal["DUPLICATE_SNAPSHOT", "STALE_SNAPSHOT"] | None = None
 
 
 class RestaurantSync(StrictSchema):
@@ -40,6 +90,7 @@ class BranchSync(StrictSchema):
     address: NonEmptyString
     is_active: bool
     is_accepting_orders: bool
+    branch_version: int = Field(ge=1)
 
     @model_validator(mode="after")
     def validate_order_acceptance(self) -> "BranchSync":
@@ -95,10 +146,25 @@ class BranchAvailabilitySync(StrictSchema):
 
 
 class SyncPayload(StrictSchema):
+    snapshot_id: UUID
+    schema_version: Literal[1]
+    generated_at: datetime = Field(
+        ...,
+        description="UTC timestamp when the snapshot was generated",
+    )
+
     restaurant: RestaurantSync
-    branches: list[BranchSync] = Field(min_length=1)
+    branches: list[BranchSync]
     menu: MenuSync
-    availability: list[BranchAvailabilitySync] = Field(min_length=1)
+    availability: list[BranchAvailabilitySync]
+
+    @field_validator("generated_at")
+    @classmethod
+    def validate_generated_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("generated_at must be timezone-aware")
+
+        return value
 
     @model_validator(mode="after")
     def validate_cross_references(self) -> "SyncPayload":
@@ -122,8 +188,7 @@ class SyncPayload(StrictSchema):
             )
 
         menu_items = {
-            item.external_id: item.is_active
-            for item in self.menu.items
+            item.external_id: item.is_active for item in self.menu.items
         }
 
         menu_item_ids = set(menu_items)
@@ -136,6 +201,12 @@ class SyncPayload(StrictSchema):
 
             availability_item_ids = set(availability_items)
 
+            branch_is_active = next(
+                branch.is_active
+                for branch in self.branches
+                if branch.external_id == branch_availability.branch_external_id
+            )
+
             if availability_item_ids != menu_item_ids:
                 raise ValueError(
                     "availability must contain every menu item "
@@ -144,6 +215,12 @@ class SyncPayload(StrictSchema):
 
             for menu_item_id, is_available in availability_items.items():
                 is_active = menu_items[menu_item_id]
+
+                if not branch_is_active and is_available:
+                    raise ValueError(
+                        f"inactive branch {branch_availability.branch_external_id} "
+                        "cannot have available menu items"
+                    )
 
                 if not is_active and is_available:
                     raise ValueError(
