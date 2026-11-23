@@ -183,17 +183,18 @@ class DemoRestaurantService:
             branches = await uow.restaurant_branches.get_all()
             menu_items = await uow.menu_items.get_all()
             branch_menu_items = await uow.branch_menu_items.get_all()
+            catalog_state = await uow.catalog_state.get_current()
             return SyncPayload(
                 snapshot_id=uuid4(),
                 schema_version=2,
                 generated_at=datetime.now(UTC),
                 restaurant=RestaurantSync(
                     external_id=settings.restaurant_external_id,
-                    name=settings.restaurant_name,
-                    description=settings.restaurant_description,
+                    name=catalog_state.restaurant_name,
+                    description=catalog_state.restaurant_description,
                 ),
                 branches=self._build_branches(branches),
-                menu=self._build_menu(menu_items),
+                menu=self._build_menu(menu_items, catalog_state.menu_name),
                 availability=self._build_availability(
                     branches, menu_items, branch_menu_items
                 ),
@@ -253,10 +254,10 @@ class DemoRestaurantService:
         ]
 
     @staticmethod
-    def _build_menu(menu_items) -> MenuSync:
+    def _build_menu(menu_items, menu_name: str) -> MenuSync:
         return MenuSync(
             external_id=settings.menu_external_id,
-            name=settings.menu_name,
+            name=menu_name,
             items=[
                 MenuItemSync(
                     external_id=item.external_id,

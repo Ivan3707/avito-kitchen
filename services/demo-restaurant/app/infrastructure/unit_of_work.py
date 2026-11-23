@@ -28,6 +28,10 @@ class UnitOfWork:
         self.session_factory = session_factory
         self.isolation_level = isolation_level
         self._entered = False
+        self._catalog_mutation_active = False
+        self._catalog_revision_incremented = False
+        self._catalog_new_branches: set[int] = set()
+        self._catalog_versioned_branches: set[int] = set()
 
     async def __aenter__(self):
         if self._entered:
