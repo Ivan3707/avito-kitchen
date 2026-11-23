@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, CheckConstraint, SmallInteger
+from sqlalchemy import BigInteger, CheckConstraint, SmallInteger, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database.base import Base
@@ -17,6 +17,21 @@ class CatalogState(Base):
         BigInteger,
         nullable=False,
         server_default="0",
+    )
+
+    restaurant_name: Mapped[str] = mapped_column(
+        String,
+        nullable=False,
+    )
+
+    restaurant_description: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    menu_name: Mapped[str] = mapped_column(
+        String,
+        nullable=False,
     )
 
     __table_args__ = (
