@@ -457,7 +457,9 @@ components:
             - "null"
 
         price:
-          type: integer
+          type:
+            - integer
+            - "null"
           exclusiveMinimum: 0
 
         is_available:
@@ -530,7 +532,9 @@ components:
           $ref: "#/components/schemas/NonEmptyString"
 
         price:
-          type: integer
+          type:
+            - integer
+            - "null"
           exclusiveMinimum: 0
 
         quantity:
@@ -659,7 +663,6 @@ components:
         - external_id
         - name
         - description
-        - price
         - is_active
       properties:
         external_id:
@@ -672,10 +675,6 @@ components:
           type:
             - string
             - "null"
-
-        price:
-          type: integer
-          exclusiveMinimum: 0
 
         is_active:
           type: boolean
@@ -703,12 +702,20 @@ components:
       required:
         - menu_item_external_id
         - is_available
+        - price
       properties:
         menu_item_external_id:
           $ref: "#/components/schemas/NonEmptyString"
 
         is_available:
           type: boolean
+
+        price:
+          type:
+            - integer
+            - "null"
+          exclusiveMinimum: 0
+          description: Required branch price; null is allowed only when unavailable.
 
     BranchAvailabilitySync:
       type: object
@@ -741,7 +748,7 @@ components:
 
         schema_version:
           type: integer
-          enum: [1]
+          enum: [2]
 
         generated_at:
           type: string

@@ -38,7 +38,7 @@ def sync_payload(*, snapshot_id=None, generated_at=None, branch_version=1):
     branch_id = f"branch-{uuid4()}"
     return {
         "snapshot_id": str(snapshot_id or uuid4()),
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": (generated_at or datetime.now(UTC)).isoformat(),
         "restaurant": {
             "external_id": restaurant_id,
@@ -63,7 +63,6 @@ def sync_payload(*, snapshot_id=None, generated_at=None, branch_version=1):
                     "external_id": "item-1",
                     "name": "Item",
                     "description": None,
-                    "price": 100,
                     "is_active": True,
                 }
             ],
@@ -75,6 +74,7 @@ def sync_payload(*, snapshot_id=None, generated_at=None, branch_version=1):
                     {
                         "menu_item_external_id": "item-1",
                         "is_available": True,
+                        "price": 100,
                     }
                 ],
             }

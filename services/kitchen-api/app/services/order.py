@@ -88,7 +88,11 @@ class OrderService:
             relation = await uow.branch_menu_items.get_by_branch_and_menu_item(
                 branch.id, menu_item.id
             )
-            if relation is None or not relation.is_available:
+            if (
+                relation is None
+                or not relation.is_available
+                or relation.price is None
+            ):
                 issues.append(
                     ValidationIssue(
                         code=BusinessErrorCode.PRODUCT_UNAVAILABLE,
@@ -97,14 +101,14 @@ class OrderService:
                     )
                 )
                 continue
-            if menu_item.price != requested_item.unit_price:
+            if relation.price != requested_item.unit_price:
                 issues.append(
                     ValidationIssue(
                         code=BusinessErrorCode.PRICE_CHANGED,
                         message="Product price has changed",
                         menu_item_external_id=requested_item.menu_item_external_id,
                         old_price=requested_item.unit_price,
-                        current_price=menu_item.price,
+                        current_price=relation.price,
                     )
                 )
         return OrderValidationResponse(valid=not issues, issues=issues)
@@ -186,7 +190,7 @@ class OrderService:
                             order_id=order.id,
                             menu_item_id=menu_item.id,
                             product_name=menu_item.name,
-                            unit_price=menu_item.price,
+                            unit_price=requested_item.unit_price,
                             quantity=requested_item.quantity,
                         )
                     )

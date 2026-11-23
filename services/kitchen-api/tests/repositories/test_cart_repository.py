@@ -88,19 +88,16 @@ async def test_get_with_items(uow: UnitOfWork):
         menu_id=menu.id,
         external_id=f"item-{uuid4()}",
         name="Burger",
-        price=500,
     )
     menu_item_2 = MenuItem(
         menu_id=menu.id,
         external_id=f"item-{uuid4()}",
         name="Pizza",
-        price=700,
     )
     menu_item_3 = MenuItem(
         menu_id=menu.id,
         external_id=f"item-{uuid4()}",
         name="Salad",
-        price=300,
     )
 
     uow.menu_items.add(menu_item_1)

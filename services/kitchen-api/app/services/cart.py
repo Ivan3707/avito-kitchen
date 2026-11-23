@@ -63,7 +63,11 @@ class CartService:
         if branch_item is None:
             raise ConflictError("Menu item is not available in this branch")
 
-        if not menu_item.is_active or not branch_item.is_available:
+        if (
+            not menu_item.is_active
+            or not branch_item.is_available
+            or branch_item.price is None
+        ):
             raise ConflictError("Menu item is unavailable")
 
         existing_item = next(
@@ -179,14 +183,12 @@ class CartService:
 
     @staticmethod
     async def _to_response(uow: UnitOfWork, cart: Cart) -> CartResponse:
-        availability = {}
+        branch_items = {}
         for item in cart.items:
             relation = await uow.branch_menu_items.get_by_branch_and_menu_item(
                 cart.branch_id, item.menu_item_id
             )
-            availability[item.menu_item_id] = bool(
-                relation and relation.is_available and item.menu_item.is_active
-            )
+            branch_items[item.menu_item_id] = relation
         return CartResponse(
             id=cart.id,
             branch_id=cart.branch_id,
@@ -195,9 +197,18 @@ class CartService:
                     menu_item_id=item.menu_item.id,
                     menu_item_external_id=item.menu_item.external_id,
                     name=item.menu_item.name,
-                    price=item.menu_item.price,
+                    price=(
+                        branch_items[item.menu_item_id].price
+                        if branch_items[item.menu_item_id] is not None
+                        else None
+                    ),
                     quantity=item.quantity,
-                    is_available=availability[item.menu_item_id],
+                    is_available=bool(
+                        branch_items[item.menu_item_id]
+                        and branch_items[item.menu_item_id].is_available
+                        and branch_items[item.menu_item_id].price is not None
+                        and item.menu_item.is_active
+                    ),
                 )
                 for item in cart.items
             ],
@@ -249,18 +260,35 @@ class CartService:
             ordered_quantities = {
                 item.menu_item_id: item.quantity for item in cart.items
             }
+            order_items = []
+            for item in cart.items:
+                relation = (
+                    await uow.branch_menu_items.get_by_branch_and_menu_item(
+                        branch_id, item.menu_item_id
+                    )
+                )
+                if (
+                    relation is None
+                    or not relation.is_available
+                    or relation.price is None
+                    or not item.menu_item.is_active
+                ):
+                    return CheckoutResponse(
+                        accepted=False,
+                        reason="Menu item is unavailable",
+                    )
+                order_items.append(
+                    OrderItemRequest(
+                        menu_item_external_id=item.menu_item.external_id,
+                        quantity=item.quantity,
+                        unit_price=relation.price,
+                    )
+                )
             order_request = CreateOrderRequest(
                 order_id=request.order_id,
                 restaurant_external_id=restaurant.external_id,
                 branch_external_id=branch.external_id,
-                items=[
-                    OrderItemRequest(
-                        menu_item_external_id=item.menu_item.external_id,
-                        quantity=item.quantity,
-                        unit_price=item.menu_item.price,
-                    )
-                    for item in cart.items
-                ],
+                items=order_items,
             )
 
         restaurant_client = RestaurantClient(

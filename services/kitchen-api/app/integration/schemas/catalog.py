@@ -24,7 +24,7 @@ class MenuItemResponse(BaseModel):
     external_id: NonEmptyString
     name: NonEmptyString
     description: str | None
-    price: int = Field(gt=0)
+    price: int | None = Field(gt=0)
     is_available: bool
 
 

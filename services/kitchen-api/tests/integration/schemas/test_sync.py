@@ -14,7 +14,7 @@ from app.integration.schemas.sync import (
 def payload_data() -> dict:
     return {
         "snapshot_id": str(uuid4()),
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": datetime.now(UTC).isoformat(),
         "restaurant": {
             "external_id": "restaurant-1",
@@ -39,7 +39,6 @@ def payload_data() -> dict:
                     "external_id": "item-1",
                     "name": "Item",
                     "description": None,
-                    "price": 100,
                     "is_active": True,
                 }
             ],
@@ -51,6 +50,7 @@ def payload_data() -> dict:
                     {
                         "menu_item_external_id": "item-1",
                         "is_available": True,
+                        "price": 100,
                     }
                 ],
             }
@@ -60,7 +60,7 @@ def payload_data() -> dict:
 
 def test_valid_sync_payload() -> None:
     payload = SyncPayload.model_validate(payload_data())
-    assert payload.schema_version == 1
+    assert payload.schema_version == 2
     assert payload.branches[0].branch_version == 3
 
 
@@ -111,6 +111,43 @@ def test_inactive_branch_cannot_expose_available_item() -> None:
 def test_inactive_item_cannot_be_available() -> None:
     data = payload_data()
     data["menu"]["items"][0]["is_active"] = False
+    with pytest.raises(ValidationError):
+        SyncPayload.model_validate(data)
+
+
+def test_available_item_requires_price() -> None:
+    data = payload_data()
+    data["availability"][0]["items"][0]["price"] = None
+    with pytest.raises(ValidationError):
+        SyncPayload.model_validate(data)
+
+
+@pytest.mark.parametrize("price", [0, -1])
+def test_branch_price_must_be_positive(price: int) -> None:
+    data = payload_data()
+    data["availability"][0]["items"][0]["price"] = price
+    with pytest.raises(ValidationError):
+        SyncPayload.model_validate(data)
+
+
+def test_unavailable_item_allows_null_price() -> None:
+    data = payload_data()
+    data["availability"][0]["items"][0]["is_available"] = False
+    data["availability"][0]["items"][0]["price"] = None
+    payload = SyncPayload.model_validate(data)
+    assert payload.availability[0].items[0].price is None
+
+
+def test_availability_price_is_required() -> None:
+    data = payload_data()
+    del data["availability"][0]["items"][0]["price"]
+    with pytest.raises(ValidationError):
+        SyncPayload.model_validate(data)
+
+
+def test_v1_snapshot_is_rejected() -> None:
+    data = payload_data()
+    data["schema_version"] = 1
     with pytest.raises(ValidationError):
         SyncPayload.model_validate(data)
 

@@ -2,8 +2,6 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     Boolean,
-    CheckConstraint,
-    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -38,11 +36,6 @@ class MenuItem(TimestampMixin, Base):
         nullable=True,
     )
 
-    price: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-    )
-
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -52,9 +45,5 @@ class MenuItem(TimestampMixin, Base):
         UniqueConstraint(
             "external_id",
             name="uq_menu_item_external_id",
-        ),
-        CheckConstraint(
-            "price > 0",
-            name="ck_menu_item_price_positive",
         ),
     )

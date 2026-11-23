@@ -1,7 +1,14 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -46,6 +53,11 @@ class BranchMenuItem(Base):
         default=False,
     )
 
+    price: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -58,5 +70,13 @@ class BranchMenuItem(Base):
             "branch_id",
             "menu_item_id",
             name="uq_branch_menu_item",
+        ),
+        CheckConstraint(
+            "price IS NULL OR price > 0",
+            name="ck_branch_menu_item_price_positive",
+        ),
+        CheckConstraint(
+            "NOT is_available OR (price IS NOT NULL AND price > 0)",
+            name="ck_branch_menu_item_available_requires_price",
         ),
     )

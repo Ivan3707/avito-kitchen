@@ -1,6 +1,7 @@
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.infrastructure.database.models.branch_menu_item import BranchMenuItem
 from app.infrastructure.database.models.menu import Menu
@@ -53,7 +54,6 @@ async def test_get_by_branch_and_menu_item_returns_branch_menu_item(
             external_id=f"item-{uuid4()}",
             name="Test Item",
             description="Test description",
-            price=500,
             is_active=True,
         )
     )
@@ -65,6 +65,7 @@ async def test_get_by_branch_and_menu_item_returns_branch_menu_item(
             branch_id=branch.id,
             menu_item_id=menu_item.id,
             is_available=True,
+            price=500,
         )
     )
 
@@ -135,7 +136,6 @@ async def test_get_with_menu_item_loads_related_menu_item(
             external_id=f"item-{uuid4()}",
             name="Test Item",
             description="Test description",
-            price=500,
             is_active=True,
         )
     )
@@ -147,6 +147,7 @@ async def test_get_with_menu_item_loads_related_menu_item(
             branch_id=branch.id,
             menu_item_id=menu_item.id,
             is_available=True,
+            price=500,
         )
     )
 
@@ -163,4 +164,64 @@ async def test_get_with_menu_item_loads_related_menu_item(
     assert result.menu_item is not None
     assert result.menu_item.id == menu_item.id
     assert result.menu_item.name == "Test Item"
-    assert result.menu_item.price == 500
+    assert result.price == 500
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("price", "is_available"),
+    [(0, False), (None, True)],
+)
+async def test_branch_menu_item_price_constraints(
+    uow: UnitOfWork,
+    price: int | None,
+    is_available: bool,
+) -> None:
+    restaurant = uow.restaurants.add(
+        Restaurant(
+            external_id=f"restaurant-{uuid4()}",
+            name="Test Restaurant",
+            description=None,
+        )
+    )
+    await uow.session.flush()
+    branch = uow.restaurant_branches.add(
+        RestaurantBranch(
+            restaurant_id=restaurant.id,
+            external_id=f"branch-{uuid4()}",
+            name="Test Branch",
+            address="Test address",
+            is_active=True,
+            is_accepting_orders=True,
+        )
+    )
+    menu = uow.menus.add(
+        Menu(
+            restaurant_id=restaurant.id,
+            external_id=f"menu-{uuid4()}",
+            name="Test Menu",
+        )
+    )
+    await uow.session.flush()
+    menu_item = uow.menu_items.add(
+        MenuItem(
+            menu_id=menu.id,
+            external_id=f"item-{uuid4()}",
+            name="Test Item",
+            description=None,
+            is_active=True,
+        )
+    )
+    await uow.session.flush()
+    uow.branch_menu_items.add(
+        BranchMenuItem(
+            branch_id=branch.id,
+            menu_item_id=menu_item.id,
+            is_available=is_available,
+            price=price,
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        await uow.session.flush()
+    await uow.session.rollback()

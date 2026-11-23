@@ -138,7 +138,6 @@ class SyncService:
                         external_id=item_data.external_id,
                         name=item_data.name,
                         description=item_data.description,
-                        price=item_data.price,
                         is_active=item_data.is_active,
                     )
                 )
@@ -146,7 +145,6 @@ class SyncService:
             else:
                 item.name = item_data.name
                 item.description = item_data.description
-                item.price = item_data.price
                 item.is_active = item_data.is_active
 
         for item in existing_items:
@@ -169,7 +167,7 @@ class SyncService:
                 relation.is_available = False
 
             availability = availability_by_branch.get(branch.external_id)
-            if availability is None or not branch.is_active:
+            if availability is None:
                 continue
 
             for availability_data in availability.items:
@@ -177,17 +175,25 @@ class SyncService:
                     availability_data.menu_item_external_id
                 ]
                 relation = relations_by_item_id.get(item.id)
-                value = availability_data.is_available and item.is_active
+                value = (
+                    availability_data.is_available
+                    and branch.is_active
+                    and item.is_active
+                )
                 if relation is None:
+                    if availability_data.price is None and not value:
+                        continue
                     uow.branch_menu_items.add(
                         BranchMenuItem(
                             branch_id=branch.id,
                             menu_item_id=item.id,
                             is_available=value,
+                            price=availability_data.price,
                         )
                     )
                 else:
                     relation.is_available = value
+                    relation.price = availability_data.price
 
         restaurant.last_snapshot_id = payload.snapshot_id
         restaurant.last_snapshot_generated_at = payload.generated_at

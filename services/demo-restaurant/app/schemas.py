@@ -104,7 +104,6 @@ class MenuItemSync(StrictSchema):
     external_id: NonEmptyString
     name: NonEmptyString
     description: str | None
-    price: int = Field(gt=0)
     is_active: bool
 
 
@@ -126,6 +125,13 @@ class MenuSync(StrictSchema):
 class MenuItemAvailabilitySync(StrictSchema):
     menu_item_external_id: NonEmptyString
     is_available: bool
+    price: int | None = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_available_price(self) -> "MenuItemAvailabilitySync":
+        if self.is_available and self.price is None:
+            raise ValueError("available menu item requires a positive price")
+        return self
 
 
 class BranchAvailabilitySync(StrictSchema):
@@ -147,7 +153,7 @@ class BranchAvailabilitySync(StrictSchema):
 
 class SyncPayload(StrictSchema):
     snapshot_id: UUID
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     generated_at: datetime = Field(
         ...,
         description="UTC timestamp when the snapshot was generated",
