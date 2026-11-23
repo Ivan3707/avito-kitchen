@@ -23,7 +23,7 @@ def make_payload(
     return SyncPayload.model_validate(
         {
             "snapshot_id": snapshot_id or uuid4(),
-            "schema_version": 1,
+            "schema_version": 2,
             "generated_at": generated_at,
             "restaurant": {
                 "external_id": restaurant_external_id,
@@ -52,7 +52,6 @@ def make_payload(
                         "external_id": item_id,
                         "name": "Item",
                         "description": None,
-                        "price": 100,
                         "is_active": True,
                     }
                 ],
@@ -65,6 +64,7 @@ def make_payload(
                             {
                                 "menu_item_external_id": item_id,
                                 "is_available": branch_active,
+                                "price": 100,
                             }
                         ],
                     }
@@ -257,3 +257,44 @@ async def test_sync_rolls_back_on_error(test_session_factory) -> None:
         assert (
             await check_uow.restaurants.get_by_external_id(external_id) is None
         )
+
+
+@pytest.mark.asyncio
+async def test_sync_stores_different_prices_for_two_branches(
+    uow: UnitOfWork,
+) -> None:
+    external_id = f"restaurant-{uuid4()}"
+    data = make_payload(
+        restaurant_external_id=external_id,
+        generated_at=datetime.now(UTC),
+    ).model_dump(mode="json")
+    second_branch = dict(data["branches"][0])
+    second_branch["external_id"] = "branch-2"
+    data["branches"].append(second_branch)
+    data["availability"].append(
+        {
+            "branch_external_id": "branch-2",
+            "items": [
+                {
+                    "menu_item_external_id": "item-1",
+                    "is_available": True,
+                    "price": 175,
+                }
+            ],
+        }
+    )
+
+    await SyncService().sync(uow, SyncPayload.model_validate(data))
+
+    restaurant = await uow.restaurants.get_by_external_id(external_id)
+    branches = await uow.restaurant_branches.get_by_restaurant_id(
+        restaurant.id
+    )
+    relations = {
+        branch.external_id: (
+            await uow.branch_menu_items.get_all_by_branch(branch.id)
+        )[0]
+        for branch in branches
+    }
+    assert relations["branch-1"].price == 100
+    assert relations["branch-2"].price == 175

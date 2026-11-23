@@ -18,7 +18,7 @@ class CartItemResponse(BaseModel):
     menu_item_id: UUID
     menu_item_external_id: NonEmptyString
     name: NonEmptyString
-    price: int = Field(gt=0)
+    price: int | None = Field(gt=0)
     quantity: int = Field(ge=1)
     is_available: bool
 

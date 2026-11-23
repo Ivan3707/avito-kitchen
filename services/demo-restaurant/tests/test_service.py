@@ -51,6 +51,10 @@ class BranchItemRepository(Repository):
 
 class FakeUow:
     orders = []
+    order_items = []
+    relation_price = 100
+    relation_available = True
+    include_relation = True
 
     def __init__(self, session_factory):
         branch = RestaurantBranch(
@@ -67,19 +71,21 @@ class FakeUow:
             external_id="item-1",
             name="Item",
             description=None,
-            price=100,
             is_active=True,
         )
         relation = BranchMenuItem(
             branch_id=branch.id,
             menu_item_id=item.id,
-            is_available=True,
+            is_available=self.relation_available,
+            price=self.relation_price,
         )
         self.restaurant_branches = Repository([branch])
         self.menu_items = Repository([item])
-        self.branch_menu_items = BranchItemRepository([relation])
+        self.branch_menu_items = BranchItemRepository(
+            [relation] if self.include_relation else []
+        )
         self.restaurant_orders = Repository(self.orders)
-        self.restaurant_order_items = Repository()
+        self.restaurant_order_items = Repository(self.order_items)
 
     async def __aenter__(self):
         return self
@@ -110,6 +116,7 @@ def order(
 @pytest.mark.asyncio
 async def test_create_order_is_idempotent(monkeypatch) -> None:
     FakeUow.orders = []
+    FakeUow.order_items = []
     monkeypatch.setattr("app.service.service.UnitOfWork", FakeUow)
     service = DemoRestaurantService(object(), object())
     first = await service.create_order(order())
@@ -117,6 +124,7 @@ async def test_create_order_is_idempotent(monkeypatch) -> None:
     assert first.accepted is True
     assert second.restaurant_order_id == first.restaurant_order_id
     assert len(FakeUow.orders) == 1
+    assert FakeUow.order_items[0].unit_price == 100
 
 
 @pytest.mark.asyncio
@@ -141,6 +149,106 @@ async def test_price_change_is_rejected(monkeypatch) -> None:
     )
     assert response.accepted is False
     assert response.reason.code == BusinessErrorCode.PRICE_CHANGED
+
+
+@pytest.mark.asyncio
+async def test_item_without_branch_price_is_unavailable(monkeypatch) -> None:
+    FakeUow.orders = []
+    monkeypatch.setattr(FakeUow, "relation_price", None)
+    monkeypatch.setattr(FakeUow, "relation_available", False)
+    monkeypatch.setattr("app.service.service.UnitOfWork", FakeUow)
+    response = await DemoRestaurantService(object(), object()).create_order(
+        order()
+    )
+    assert response.accepted is False
+    assert response.reason.code == BusinessErrorCode.PRODUCT_UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_missing_branch_item_relation_is_unavailable(monkeypatch) -> None:
+    FakeUow.orders = []
+    monkeypatch.setattr(FakeUow, "include_relation", False)
+    monkeypatch.setattr("app.service.service.UnitOfWork", FakeUow)
+    response = await DemoRestaurantService(object(), object()).create_order(
+        order()
+    )
+    assert response.accepted is False
+    assert response.reason.code == BusinessErrorCode.PRODUCT_UNAVAILABLE
+
+
+def test_snapshot_contains_branch_specific_prices() -> None:
+    first_branch = RestaurantBranch(
+        id=uuid4(),
+        external_id="branch-1",
+        name="First",
+        address="Address 1",
+        is_active=True,
+        is_accepting_orders=True,
+        branch_version=1,
+    )
+    second_branch = RestaurantBranch(
+        id=uuid4(),
+        external_id="branch-2",
+        name="Second",
+        address="Address 2",
+        is_active=True,
+        is_accepting_orders=True,
+        branch_version=1,
+    )
+    item = MenuItem(
+        id=uuid4(),
+        external_id="item-1",
+        name="Item",
+        description=None,
+        is_active=True,
+    )
+    relations = [
+        BranchMenuItem(
+            branch_id=first_branch.id,
+            menu_item_id=item.id,
+            is_available=True,
+            price=100,
+        ),
+        BranchMenuItem(
+            branch_id=second_branch.id,
+            menu_item_id=item.id,
+            is_available=True,
+            price=175,
+        ),
+    ]
+
+    availability = DemoRestaurantService._build_availability(
+        [first_branch, second_branch], [item], relations
+    )
+
+    assert availability[0].items[0].price == 100
+    assert availability[1].items[0].price == 175
+
+
+def test_snapshot_marks_missing_branch_item_relation_unavailable() -> None:
+    branch = RestaurantBranch(
+        id=uuid4(),
+        external_id="branch-1",
+        name="Branch",
+        address="Address",
+        is_active=True,
+        is_accepting_orders=True,
+        branch_version=1,
+    )
+    item = MenuItem(
+        id=uuid4(),
+        external_id="item-1",
+        name="Item",
+        description=None,
+        is_active=True,
+    )
+
+    availability = DemoRestaurantService._build_availability(
+        [branch], [item], []
+    )
+
+    assert availability[0].items[0].price is None
+    assert availability[0].items[0].is_available is False
 
 
 @pytest.mark.asyncio

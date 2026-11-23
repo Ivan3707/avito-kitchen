@@ -60,8 +60,12 @@ class CatalogService:
                 external_id=item.menu_item.external_id,
                 name=item.menu_item.name,
                 description=item.menu_item.description,
-                price=item.menu_item.price,
-                is_available=item.is_available and item.menu_item.is_active,
+                price=item.price,
+                is_available=(
+                    item.is_available
+                    and item.price is not None
+                    and item.menu_item.is_active
+                ),
             )
             for item in branch_menu_items
         ]

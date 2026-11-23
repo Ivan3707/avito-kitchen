@@ -54,7 +54,6 @@ entity "menu_items" as menu_items {
     * external_id : VARCHAR
     * name : VARCHAR
     description : TEXT
-    * price : INTEGER
     * is_active : BOOLEAN
     * created_at : TIMESTAMP
     * updated_at : TIMESTAMP
@@ -65,6 +64,7 @@ entity "branch_menu_items" as branch_menu_items {
     --
     * branch_id : UUID <<FK>>
     * menu_item_id : UUID <<FK>>
+    price : INTEGER
     * is_available : BOOLEAN
 }
 

@@ -38,7 +38,12 @@ class TimeoutRestaurantClient:
         raise RestaurantTimeoutError
 
 
-async def create_catalog(session_factory):
+async def create_catalog(
+    session_factory,
+    *,
+    price: int | None = 100,
+    is_available: bool = True,
+):
     external_id = f"restaurant-{uuid4()}"
     branch_external_id = "branch-1"
     async with UnitOfWork(session_factory) as uow:
@@ -75,7 +80,6 @@ async def create_catalog(session_factory):
                 external_id="item-1",
                 name="Item",
                 description=None,
-                price=100,
                 is_active=True,
             )
         )
@@ -84,7 +88,8 @@ async def create_catalog(session_factory):
             BranchMenuItem(
                 branch_id=branch.id,
                 menu_item_id=item.id,
-                is_available=True,
+                is_available=is_available,
+                price=price,
             )
         )
     return external_id, branch_external_id
@@ -261,4 +266,25 @@ async def test_catalog_rejection_avoids_restaurant_call(test_session_factory):
     )
     assert result.accepted is False
     assert result.reason.code == BusinessErrorCode.PRICE_CHANGED
+    assert client.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_item_without_branch_price_is_unavailable(
+    test_session_factory,
+):
+    restaurant_id, branch_id = await create_catalog(
+        test_session_factory,
+        price=None,
+        is_available=False,
+    )
+    client = FakeRestaurantClient()
+    result = await OrderService().create_order(
+        lambda: UnitOfWork(test_session_factory),
+        request(restaurant_id, branch_id),
+        "customer@example.com",
+        client,
+    )
+    assert result.accepted is False
+    assert result.reason.code == BusinessErrorCode.PRODUCT_UNAVAILABLE
     assert client.calls == 0

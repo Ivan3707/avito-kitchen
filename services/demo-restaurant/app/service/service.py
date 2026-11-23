@@ -107,6 +107,7 @@ class DemoRestaurantService:
                     not menu_item.is_active
                     or relation is None
                     or not relation.is_available
+                    or relation.price is None
                 ):
                     issue = ValidationIssue(
                         code=BusinessErrorCode.PRODUCT_UNAVAILABLE,
@@ -114,16 +115,16 @@ class DemoRestaurantService:
                         menu_item_external_id=menu_item.external_id,
                     )
                     break
-                if menu_item.price != requested_item.unit_price:
+                if relation.price != requested_item.unit_price:
                     issue = ValidationIssue(
                         code=BusinessErrorCode.PRICE_CHANGED,
                         message="Product price has changed",
                         menu_item_external_id=menu_item.external_id,
                         old_price=requested_item.unit_price,
-                        current_price=menu_item.price,
+                        current_price=relation.price,
                     )
                     break
-                validated_items.append((requested_item, menu_item))
+                validated_items.append((requested_item, menu_item, relation))
 
             if issue is not None:
                 uow.restaurant_orders.add(
@@ -158,7 +159,7 @@ class DemoRestaurantService:
                 )
             )
             await uow.flush()
-            for requested_item, menu_item in validated_items:
+            for requested_item, menu_item, relation in validated_items:
                 uow.restaurant_order_items.add(
                     RestaurantOrderItem(
                         order_id=order.id,
@@ -166,7 +167,7 @@ class DemoRestaurantService:
                         menu_item_external_id=menu_item.external_id,
                         menu_item_name=menu_item.name,
                         quantity=requested_item.quantity,
-                        unit_price=menu_item.price,
+                        unit_price=relation.price,
                     )
                 )
             return RestaurantOrderResponse(
@@ -184,7 +185,7 @@ class DemoRestaurantService:
             branch_menu_items = await uow.branch_menu_items.get_all()
             return SyncPayload(
                 snapshot_id=uuid4(),
-                schema_version=1,
+                schema_version=2,
                 generated_at=datetime.now(UTC),
                 restaurant=RestaurantSync(
                     external_id=settings.restaurant_external_id,
@@ -261,7 +262,6 @@ class DemoRestaurantService:
                     external_id=item.external_id,
                     name=item.name,
                     description=item.description,
-                    price=item.price,
                     is_active=item.is_active,
                 )
                 for item in menu_items
@@ -273,7 +273,7 @@ class DemoRestaurantService:
         branches, menu_items, branch_menu_items
     ) -> list[BranchAvailabilitySync]:
         availability_map = {
-            (item.branch_id, item.menu_item_id): item.is_available
+            (item.branch_id, item.menu_item_id): item
             for item in branch_menu_items
         }
         return [
@@ -282,15 +282,21 @@ class DemoRestaurantService:
                 items=[
                     MenuItemAvailabilitySync(
                         menu_item_external_id=menu_item.external_id,
+                        price=(
+                            relation.price if relation is not None else None
+                        ),
                         is_available=(
-                            availability_map.get(
-                                (branch.id, menu_item.id), False
-                            )
+                            relation is not None
+                            and relation.is_available
+                            and relation.price is not None
                             and branch.is_active
                             and menu_item.is_active
                         ),
                     )
                     for menu_item in menu_items
+                    for relation in [
+                        availability_map.get((branch.id, menu_item.id))
+                    ]
                 ],
             )
             for branch in branches
