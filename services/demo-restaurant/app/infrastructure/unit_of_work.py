@@ -31,6 +31,7 @@ class UnitOfWork:
         self._catalog_mutation_active = False
         self._catalog_initial_state: object | None = None
         self._catalog_initial_revision: int | None = None
+        self._catalog_transaction_started = False
         self._rollback_only = False
 
     async def __aenter__(self):
@@ -81,16 +82,16 @@ class UnitOfWork:
 
         try:
             if exc_type is not None or self._rollback_only:
-                await self.rollback()
+                await self._rollback_on_exit()
                 if exc_type is None:
                     error = RuntimeError(
                         "UnitOfWork transaction is marked rollback-only"
                     )
             else:
-                await self.commit()
+                await self._commit_on_exit()
         except BaseException as transaction_exc:
             try:
-                await self.rollback()
+                await self._rollback_on_exit()
             except BaseException as rollback_exc:
                 transaction_exc.add_note(
                     f"Additionally, rollback failed: {rollback_exc!r}"
@@ -116,6 +117,12 @@ class UnitOfWork:
             raise error
 
     async def commit(self):
+        if self._catalog_transaction_started:
+            self.mark_rollback_only()
+            raise RuntimeError(
+                "manual commit is not allowed after a catalog mutation "
+                "transaction has started"
+            )
         if self._rollback_only:
             await self.session.rollback()
             raise RuntimeError(
@@ -124,6 +131,12 @@ class UnitOfWork:
         await self.session.commit()
 
     async def rollback(self):
+        if self._catalog_transaction_started:
+            self.mark_rollback_only()
+            raise RuntimeError(
+                "manual rollback is not allowed after a catalog mutation "
+                "transaction has started"
+            )
         await self.session.rollback()
 
     async def flush(self):
@@ -131,3 +144,12 @@ class UnitOfWork:
 
     def mark_rollback_only(self) -> None:
         self._rollback_only = True
+
+    def mark_catalog_transaction_started(self) -> None:
+        self._catalog_transaction_started = True
+
+    async def _commit_on_exit(self) -> None:
+        await self.session.commit()
+
+    async def _rollback_on_exit(self) -> None:
+        await self.session.rollback()

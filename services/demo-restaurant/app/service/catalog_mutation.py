@@ -91,6 +91,7 @@ class CatalogMutationService:
         except BaseException:
             self.uow.mark_rollback_only()
             raise
+        self.uow.mark_catalog_transaction_started()
         self.uow._catalog_mutation_active = True
         self._active = True
         return self
