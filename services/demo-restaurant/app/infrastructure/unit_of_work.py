@@ -29,9 +29,9 @@ class UnitOfWork:
         self.isolation_level = isolation_level
         self._entered = False
         self._catalog_mutation_active = False
-        self._catalog_revision_incremented = False
-        self._catalog_new_branches: set[int] = set()
-        self._catalog_versioned_branches: set[int] = set()
+        self._catalog_initial_state: object | None = None
+        self._catalog_initial_revision: int | None = None
+        self._rollback_only = False
 
     async def __aenter__(self):
         if self._entered:
@@ -80,8 +80,12 @@ class UnitOfWork:
         error = exc_value
 
         try:
-            if exc_type is not None:
+            if exc_type is not None or self._rollback_only:
                 await self.rollback()
+                if exc_type is None:
+                    error = RuntimeError(
+                        "UnitOfWork transaction is marked rollback-only"
+                    )
             else:
                 await self.commit()
         except BaseException as transaction_exc:
@@ -112,6 +116,11 @@ class UnitOfWork:
             raise error
 
     async def commit(self):
+        if self._rollback_only:
+            await self.session.rollback()
+            raise RuntimeError(
+                "UnitOfWork transaction is marked rollback-only"
+            )
         await self.session.commit()
 
     async def rollback(self):
@@ -119,3 +128,6 @@ class UnitOfWork:
 
     async def flush(self):
         await self.session.flush()
+
+    def mark_rollback_only(self) -> None:
+        self._rollback_only = True

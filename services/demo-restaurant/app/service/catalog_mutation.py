@@ -1,3 +1,5 @@
+from dataclasses import dataclass, field
+from functools import wraps
 from types import TracebackType
 from typing import Any
 
@@ -33,19 +35,62 @@ class _UnsetType:
 _UNSET = _UnsetType()
 
 
+def _rollback_on_error(method: Any) -> Any:
+    @wraps(method)
+    async def wrapper(
+        self: "CatalogMutationService",
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        try:
+            return await method(self, *args, **kwargs)
+        except BaseException:
+            self.uow.mark_rollback_only()
+            raise
+
+    return wrapper
+
+
+@dataclass(frozen=True)
+class _CatalogBusinessState:
+    metadata: tuple[str, str | None, str]
+    branches: tuple[tuple[str, str, str, bool, bool], ...]
+    menu_items: tuple[tuple[str, str, str | None, bool], ...]
+    relations: tuple[tuple[str, str, int | None, bool], ...]
+    branch_versions: tuple[tuple[str, int], ...] = field(compare=False)
+    branch_entities: tuple[RestaurantBranch, ...] = field(
+        compare=False,
+        repr=False,
+    )
+
+
 class CatalogMutationService:
     """Mutate catalog state inside an existing UnitOfWork transaction."""
 
     def __init__(self, uow: UnitOfWork):
         self.uow = uow
         self._catalog_state: CatalogState | None = None
-        self._changed = False
         self._active = False
 
     async def __aenter__(self) -> "CatalogMutationService":
         if self._active or self.uow._catalog_mutation_active:
             raise RuntimeError("another catalog mutation is already active")
-        self._catalog_state = await self.uow.catalog_state.get_for_update()
+        if self.uow._rollback_only:
+            raise RuntimeError("UnitOfWork transaction is rollback-only")
+        try:
+            self._catalog_state = (
+                await self.uow.catalog_state.get_for_update()
+            )
+            if self.uow._catalog_initial_state is None:
+                self.uow._catalog_initial_state = (
+                    await self._capture_business_state(self._catalog_state)
+                )
+                self.uow._catalog_initial_revision = (
+                    self._catalog_state.catalog_revision
+                )
+        except BaseException:
+            self.uow.mark_rollback_only()
+            raise
         self.uow._catalog_mutation_active = True
         self._active = True
         return self
@@ -57,17 +102,31 @@ class CatalogMutationService:
         traceback: TracebackType | None,
     ) -> None:
         try:
-            if (
-                exc_type is None
-                and self._changed
-                and not self.uow._catalog_revision_incremented
+            if exc_type is not None:
+                self.uow.mark_rollback_only()
+                return
+            await self.uow.flush()
+            current_state = await self._capture_business_state(
+                self._require_active()
+            )
+            initial_state = self.uow._catalog_initial_state
+            initial_revision = self.uow._catalog_initial_revision
+            if not isinstance(initial_state, _CatalogBusinessState) or (
+                initial_revision is None
             ):
-                await self.uow.catalog_state.increment()
-                self.uow._catalog_revision_incremented = True
+                raise RuntimeError("initial catalog state is missing")
+            self._reconcile_branch_versions(initial_state, current_state)
+            self._require_active().catalog_revision = initial_revision + int(
+                current_state != initial_state
+            )
+        except BaseException:
+            self.uow.mark_rollback_only()
+            raise
         finally:
             self.uow._catalog_mutation_active = False
             self._active = False
 
+    @_rollback_on_error
     async def update_restaurant(
         self,
         *,
@@ -83,9 +142,9 @@ class CatalogMutationService:
             changed |= self._assign(
                 state, "restaurant_description", description
             )
-        self._changed |= changed
         return changed
 
+    @_rollback_on_error
     async def update_menu(
         self,
         *,
@@ -94,9 +153,9 @@ class CatalogMutationService:
         state = self._require_active()
         self._require_non_empty(name, "menu name")
         changed = self._assign(state, "menu_name", name)
-        self._changed |= changed
         return changed
 
+    @_rollback_on_error
     async def create_branch(
         self,
         *,
@@ -135,10 +194,9 @@ class CatalogMutationService:
                 branch_version=1,
             )
         )
-        self.uow._catalog_new_branches.add(id(branch))
-        self._changed = True
         return branch
 
+    @_rollback_on_error
     async def update_branch(
         self,
         external_id: str,
@@ -177,10 +235,9 @@ class CatalogMutationService:
         changed |= self._assign(
             branch, "is_accepting_orders", next_accepting
         )
-        if changed:
-            self._mark_branch_changed(branch)
         return changed
 
+    @_rollback_on_error
     async def deactivate_branch(self, external_id: str) -> bool:
         return await self.update_branch(
             external_id,
@@ -188,6 +245,7 @@ class CatalogMutationService:
             is_accepting_orders=False,
         )
 
+    @_rollback_on_error
     async def create_menu_item(
         self,
         *,
@@ -219,9 +277,9 @@ class CatalogMutationService:
                 is_active=is_active,
             )
         )
-        self._changed = True
         return menu_item
 
+    @_rollback_on_error
     async def update_menu_item(
         self,
         external_id: str,
@@ -241,12 +299,13 @@ class CatalogMutationService:
         if not isinstance(is_active, _UnsetType):
             self._require_bool(is_active, "menu item is_active")
             changed |= self._assign(menu_item, "is_active", is_active)
-        self._changed |= changed
         return changed
 
+    @_rollback_on_error
     async def deactivate_menu_item(self, external_id: str) -> bool:
         return await self.update_menu_item(external_id, is_active=False)
 
+    @_rollback_on_error
     async def create_branch_menu_item(
         self,
         *,
@@ -283,9 +342,9 @@ class CatalogMutationService:
                 is_available=is_available,
             )
         )
-        self._mark_branch_changed(branch)
         return relation
 
+    @_rollback_on_error
     async def update_branch_menu_item(
         self,
         *,
@@ -319,10 +378,9 @@ class CatalogMutationService:
         changed |= self._assign(
             relation, "is_available", next_available
         )
-        if changed:
-            self._mark_branch_changed(branch)
         return changed
 
+    @_rollback_on_error
     async def exclude_branch_menu_item(
         self,
         *,
@@ -358,15 +416,107 @@ class CatalogMutationService:
             )
         return menu_item
 
-    def _mark_branch_changed(self, branch: RestaurantBranch) -> None:
-        branch_identity = id(branch)
-        if (
-            branch_identity not in self.uow._catalog_new_branches
-            and branch_identity not in self.uow._catalog_versioned_branches
-        ):
-            branch.branch_version += 1
-            self.uow._catalog_versioned_branches.add(branch_identity)
-        self._changed = True
+    async def _capture_business_state(
+        self,
+        catalog_state: CatalogState,
+    ) -> _CatalogBusinessState:
+        branches = await self.uow.restaurant_branches.get_all()
+        menu_items = await self.uow.menu_items.get_all()
+        relations = await self.uow.branch_menu_items.get_all()
+        branch_ids = {
+            branch.id: branch.external_id for branch in branches
+        }
+        menu_item_ids = {
+            menu_item.id: menu_item.external_id for menu_item in menu_items
+        }
+        return _CatalogBusinessState(
+            metadata=(
+                catalog_state.restaurant_name,
+                catalog_state.restaurant_description,
+                catalog_state.menu_name,
+            ),
+            branches=tuple(
+                sorted(
+                    (
+                        branch.external_id,
+                        branch.name,
+                        branch.address,
+                        branch.is_active,
+                        branch.is_accepting_orders,
+                    )
+                    for branch in branches
+                )
+            ),
+            menu_items=tuple(
+                sorted(
+                    (
+                        menu_item.external_id,
+                        menu_item.name,
+                        menu_item.description,
+                        menu_item.is_active,
+                    )
+                    for menu_item in menu_items
+                )
+            ),
+            relations=tuple(
+                sorted(
+                    (
+                        branch_ids[relation.branch_id],
+                        menu_item_ids[relation.menu_item_id],
+                        relation.price,
+                        relation.is_available,
+                    )
+                    for relation in relations
+                )
+            ),
+            branch_versions=tuple(
+                sorted(
+                    (branch.external_id, branch.branch_version)
+                    for branch in branches
+                )
+            ),
+            branch_entities=tuple(branches),
+        )
+
+    def _reconcile_branch_versions(
+        self,
+        initial: _CatalogBusinessState,
+        current: _CatalogBusinessState,
+    ) -> None:
+        initial_versions = dict(initial.branch_versions)
+        for branch in current.branch_entities:
+            external_id = branch.external_id
+            initial_version = initial_versions.get(external_id)
+            if initial_version is None:
+                branch.branch_version = 1
+                continue
+            branch.branch_version = initial_version + int(
+                self._branch_state(initial, external_id)
+                != self._branch_state(current, external_id)
+            )
+
+    @staticmethod
+    def _branch_state(
+        state: _CatalogBusinessState,
+        external_id: str,
+    ) -> tuple[
+        tuple[str, str, str, bool, bool] | None,
+        tuple[tuple[str, str, int | None, bool], ...],
+    ]:
+        branch = next(
+            (
+                candidate
+                for candidate in state.branches
+                if candidate[0] == external_id
+            ),
+            None,
+        )
+        relations = tuple(
+            relation
+            for relation in state.relations
+            if relation[0] == external_id
+        )
+        return branch, relations
 
     @staticmethod
     def _assign(entity: Any, attribute: str, value: Any) -> bool:
