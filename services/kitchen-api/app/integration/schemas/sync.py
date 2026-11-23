@@ -29,8 +29,6 @@ class BranchSync(SyncSchema):
     address: NonEmptyString
     is_active: bool
     is_accepting_orders: bool
-    branch_version: int = Field(ge=1)
-
     @model_validator(mode="after")
     def validate_order_acceptance(self) -> "BranchSync":
         if not self.is_active and self.is_accepting_orders:
@@ -92,7 +90,8 @@ class BranchAvailabilitySync(SyncSchema):
 
 class SyncPayload(SyncSchema):
     snapshot_id: UUID
-    schema_version: Literal[2]
+    schema_version: Literal[3]
+    catalog_revision: int = Field(ge=0)
     generated_at: datetime
 
     restaurant: RestaurantSync
@@ -182,7 +181,11 @@ class UpdatedSyncResponse(BaseModel):
 class IgnoredSyncResponse(BaseModel):
     status: Literal["ignored"] = SyncStatus.IGNORED
     snapshot_id: UUID
-    reason: Literal["DUPLICATE_SNAPSHOT", "STALE_SNAPSHOT"]
+    reason: Literal[
+        "DUPLICATE_SNAPSHOT",
+        "DUPLICATE_STATE",
+        "STALE_SNAPSHOT",
+    ]
 
 
 SyncResponse = Annotated[

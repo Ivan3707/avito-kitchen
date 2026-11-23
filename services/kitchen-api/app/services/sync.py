@@ -1,3 +1,6 @@
+from datetime import UTC, datetime, timedelta
+from uuid import UUID
+
 from app.infrastructure.database.models.branch_menu_item import BranchMenuItem
 from app.infrastructure.database.models.menu import Menu
 from app.infrastructure.database.models.menu_item import MenuItem
@@ -13,6 +16,10 @@ from app.integration.schemas.sync import (
     SyncResponse,
     UpdatedSyncResponse,
 )
+from app.services.catalog_checksum import catalog_checksum
+from app.services.errors import ConflictError
+
+SNAPSHOT_RETENTION = timedelta(days=30)
 
 
 class SyncService:
@@ -20,9 +27,39 @@ class SyncService:
         self, uow: UnitOfWork, payload: SyncPayload
     ) -> SyncResponse:
         external_id = payload.restaurant.external_id
-        await uow.restaurants.lock_external_id(external_id)
+        checksum = catalog_checksum(payload)
 
-        if await uow.sync_snapshots.get_by_id(payload.snapshot_id) is not None:
+        await uow.restaurants.lock_external_id(external_id)
+        await uow.sync_snapshots.lock_id(payload.snapshot_id)
+
+        known_snapshot = await uow.sync_snapshots.get_by_id(
+            payload.snapshot_id
+        )
+        if known_snapshot is not None:
+            response = await self._handle_known_snapshot(
+                uow, payload, checksum, known_snapshot
+            )
+            await self._delete_expired_history(
+                uow, known_snapshot.restaurant_id
+            )
+            return response
+
+        snapshot_owner = await uow.restaurants.get_by_last_snapshot_id(
+            payload.snapshot_id
+        )
+        if snapshot_owner is not None:
+            matches = (
+                snapshot_owner.external_id == external_id
+                and snapshot_owner.catalog_revision
+                == payload.catalog_revision
+                and snapshot_owner.catalog_checksum == checksum
+            )
+            if not matches:
+                raise ConflictError(
+                    "snapshot_id is retained as another current or legacy "
+                    "snapshot"
+                )
+            await self._delete_expired_history(uow, snapshot_owner.id)
             return IgnoredSyncResponse(
                 snapshot_id=payload.snapshot_id,
                 reason="DUPLICATE_SNAPSHOT",
@@ -31,43 +68,80 @@ class SyncService:
         restaurant = await uow.restaurants.get_by_external_id_for_update(
             external_id
         )
-        if restaurant is not None and self._is_stale_by_time(
-            restaurant, payload
-        ):
-            return IgnoredSyncResponse(
-                snapshot_id=payload.snapshot_id,
-                reason="STALE_SNAPSHOT",
-            )
+        if restaurant is not None and restaurant.catalog_revision is not None:
+            if payload.catalog_revision < restaurant.catalog_revision:
+                self._record_snapshot(uow, restaurant, payload, checksum)
+                await self._delete_expired_history(uow, restaurant.id)
+                return IgnoredSyncResponse(
+                    snapshot_id=payload.snapshot_id,
+                    reason="STALE_SNAPSHOT",
+                )
 
+            if payload.catalog_revision == restaurant.catalog_revision:
+                if checksum != restaurant.catalog_checksum:
+                    raise ConflictError(
+                        "catalog revision already exists with different "
+                        "business content"
+                    )
+                self._record_snapshot(uow, restaurant, payload, checksum)
+                await self._delete_expired_history(uow, restaurant.id)
+                return IgnoredSyncResponse(
+                    snapshot_id=payload.snapshot_id,
+                    reason="DUPLICATE_STATE",
+                )
+
+        restaurant = await self._apply_snapshot(uow, restaurant, payload)
+        restaurant.catalog_revision = payload.catalog_revision
+        restaurant.catalog_checksum = checksum
+        restaurant.last_snapshot_id = payload.snapshot_id
+        restaurant.last_snapshot_generated_at = payload.generated_at
+        self._record_snapshot(uow, restaurant, payload, checksum)
+        await self._delete_expired_history(uow, restaurant.id)
+        return UpdatedSyncResponse(snapshot_id=payload.snapshot_id)
+
+    async def _handle_known_snapshot(
+        self,
+        uow: UnitOfWork,
+        payload: SyncPayload,
+        checksum: str,
+        known_snapshot: SyncSnapshot,
+    ) -> IgnoredSyncResponse:
+        known_restaurant = await uow.restaurants.get_by_id(
+            known_snapshot.restaurant_id
+        )
+        matches = (
+            known_restaurant is not None
+            and known_restaurant.external_id
+            == payload.restaurant.external_id
+            and known_snapshot.catalog_revision == payload.catalog_revision
+            and known_snapshot.catalog_checksum == checksum
+        )
+        if not matches:
+            raise ConflictError(
+                "snapshot_id already exists with different identity, "
+                "revision, or business content"
+            )
+        return IgnoredSyncResponse(
+            snapshot_id=payload.snapshot_id,
+            reason="DUPLICATE_SNAPSHOT",
+        )
+
+    async def _apply_snapshot(
+        self,
+        uow: UnitOfWork,
+        restaurant: Restaurant | None,
+        payload: SyncPayload,
+    ) -> Restaurant:
         if restaurant is None:
             restaurant = uow.restaurants.add(
                 Restaurant(
-                    external_id=external_id,
+                    external_id=payload.restaurant.external_id,
                     name=payload.restaurant.name,
                     description=payload.restaurant.description,
                 )
             )
             await uow.flush()
         else:
-            existing_for_version_check = (
-                await uow.restaurant_branches.get_by_restaurant_id(
-                    restaurant.id
-                )
-            )
-            incoming_versions = {
-                branch.external_id: branch.branch_version
-                for branch in payload.branches
-            }
-            if any(
-                branch.external_id in incoming_versions
-                and incoming_versions[branch.external_id]
-                < branch.branch_version
-                for branch in existing_for_version_check
-            ):
-                return IgnoredSyncResponse(
-                    snapshot_id=payload.snapshot_id,
-                    reason="STALE_SNAPSHOT",
-                )
             restaurant.name = payload.restaurant.name
             restaurant.description = payload.restaurant.description
 
@@ -80,7 +154,6 @@ class SyncService:
         incoming_branch_ids = {
             branch.external_id for branch in payload.branches
         }
-
         for branch_data in payload.branches:
             branch = branches_by_external_id.get(branch_data.external_id)
             if branch is None:
@@ -92,7 +165,6 @@ class SyncService:
                         address=branch_data.address,
                         is_active=branch_data.is_active,
                         is_accepting_orders=branch_data.is_accepting_orders,
-                        branch_version=branch_data.branch_version,
                     )
                 )
                 branches_by_external_id[branch_data.external_id] = branch
@@ -101,13 +173,11 @@ class SyncService:
                 branch.address = branch_data.address
                 branch.is_active = branch_data.is_active
                 branch.is_accepting_orders = branch_data.is_accepting_orders
-                branch.branch_version = branch_data.branch_version
 
         for branch in existing_branches:
             if branch.external_id not in incoming_branch_ids:
                 branch.is_active = False
                 branch.is_accepting_orders = False
-
         await uow.flush()
 
         menu = await uow.menus.get_by_restaurant_id(restaurant.id)
@@ -165,6 +235,7 @@ class SyncService:
             }
             for relation in existing_relations:
                 relation.is_available = False
+                relation.price = None
 
             availability = availability_by_branch.get(branch.external_id)
             if availability is None:
@@ -175,41 +246,52 @@ class SyncService:
                     availability_data.menu_item_external_id
                 ]
                 relation = relations_by_item_id.get(item.id)
-                value = (
+                is_available = (
                     availability_data.is_available
                     and branch.is_active
                     and item.is_active
                 )
                 if relation is None:
-                    if availability_data.price is None and not value:
+                    if availability_data.price is None and not is_available:
                         continue
                     uow.branch_menu_items.add(
                         BranchMenuItem(
                             branch_id=branch.id,
                             menu_item_id=item.id,
-                            is_available=value,
+                            is_available=is_available,
                             price=availability_data.price,
                         )
                     )
                 else:
-                    relation.is_available = value
+                    relation.is_available = is_available
                     relation.price = availability_data.price
 
-        restaurant.last_snapshot_id = payload.snapshot_id
-        restaurant.last_snapshot_generated_at = payload.generated_at
+        return restaurant
+
+    @staticmethod
+    def _record_snapshot(
+        uow: UnitOfWork,
+        restaurant: Restaurant,
+        payload: SyncPayload,
+        checksum: str,
+    ) -> None:
         uow.sync_snapshots.add(
             SyncSnapshot(
                 snapshot_id=payload.snapshot_id,
                 restaurant_id=restaurant.id,
                 generated_at=payload.generated_at,
+                catalog_revision=payload.catalog_revision,
+                catalog_checksum=checksum,
             )
         )
-        return UpdatedSyncResponse(snapshot_id=payload.snapshot_id)
 
     @staticmethod
-    def _is_stale_by_time(
-        restaurant: Restaurant,
-        payload: SyncPayload,
-    ) -> bool:
-        current = restaurant.last_snapshot_generated_at
-        return current is not None and payload.generated_at <= current
+    async def _delete_expired_history(
+        uow: UnitOfWork,
+        restaurant_id: UUID,
+    ) -> None:
+        cutoff = datetime.now(UTC) - SNAPSHOT_RETENTION
+        await uow.sync_snapshots.delete_processed_before(
+            restaurant_id,
+            cutoff,
+        )

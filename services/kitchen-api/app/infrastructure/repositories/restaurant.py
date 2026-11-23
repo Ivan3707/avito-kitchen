@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from sqlalchemy import select, text
 
 from app.infrastructure.database.models.restaurant import Restaurant
@@ -15,6 +17,17 @@ class RestaurantRepository(BaseRepository[Restaurant]):
             select(self.model).where(self.model.external_id == external_id)
         )
 
+        return result.scalar_one_or_none()
+
+    async def get_by_last_snapshot_id(
+        self,
+        snapshot_id: UUID,
+    ) -> Restaurant | None:
+        result = await self.session.execute(
+            select(self.model).where(
+                self.model.last_snapshot_id == snapshot_id
+            )
+        )
         return result.scalar_one_or_none()
 
     async def lock_external_id(self, external_id: str) -> None:
