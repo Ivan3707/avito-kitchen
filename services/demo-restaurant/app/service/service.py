@@ -186,7 +186,8 @@ class DemoRestaurantService:
             catalog_state = await uow.catalog_state.get_current()
             return SyncPayload(
                 snapshot_id=uuid4(),
-                schema_version=2,
+                schema_version=3,
+                catalog_revision=catalog_state.catalog_revision,
                 generated_at=datetime.now(UTC),
                 restaurant=RestaurantSync(
                     external_id=settings.restaurant_external_id,
@@ -248,7 +249,6 @@ class DemoRestaurantService:
                 address=branch.address,
                 is_active=branch.is_active,
                 is_accepting_orders=branch.is_accepting_orders,
-                branch_version=branch.branch_version,
             )
             for branch in branches
         ]

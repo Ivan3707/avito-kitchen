@@ -75,7 +75,11 @@ class RestaurantOrderResponse(StrictSchema):
 class SyncResponse(StrictSchema):
     status: Literal["updated", "ignored"]
     snapshot_id: UUID
-    reason: Literal["DUPLICATE_SNAPSHOT", "STALE_SNAPSHOT"] | None = None
+    reason: Literal[
+        "DUPLICATE_SNAPSHOT",
+        "DUPLICATE_STATE",
+        "STALE_SNAPSHOT",
+    ] | None = None
 
 
 class RestaurantSync(StrictSchema):
@@ -90,8 +94,6 @@ class BranchSync(StrictSchema):
     address: NonEmptyString
     is_active: bool
     is_accepting_orders: bool
-    branch_version: int = Field(ge=1)
-
     @model_validator(mode="after")
     def validate_order_acceptance(self) -> "BranchSync":
         if not self.is_active and self.is_accepting_orders:
@@ -153,7 +155,8 @@ class BranchAvailabilitySync(StrictSchema):
 
 class SyncPayload(StrictSchema):
     snapshot_id: UUID
-    schema_version: Literal[2]
+    schema_version: Literal[3]
+    catalog_revision: int = Field(ge=0)
     generated_at: datetime = Field(
         ...,
         description="UTC timestamp when the snapshot was generated",
