@@ -1,6 +1,7 @@
 import json
 from collections.abc import Callable
 from hashlib import sha256
+from uuid import UUID
 
 from app.infrastructure.clients.restaurant import (
     RestaurantClient,
@@ -133,11 +134,13 @@ class OrderService:
             user = await uow.users.get_by_email(user_email)
             if user is None:
                 raise ResourceNotFoundError("User not found")
+            user_id = user.id
             await uow.orders.lock_external_id(restaurant.id, request.order_id)
             existing = await uow.orders.get_by_external_id_for_update(
                 restaurant.id, request.order_id
             )
             if existing is not None:
+                self.ensure_owner(existing, user_id)
                 if existing.request_hash != request_hash:
                     return self._rejected(
                         BusinessErrorCode.ORDER_ID_CONFLICT,
@@ -216,6 +219,7 @@ class OrderService:
             order = await uow.orders.get_by_external_id_for_update(
                 restaurant.id, request.order_id
             )
+            self.ensure_owner(order, user_id)
             if order.status != "pending":
                 return self.stored_response(order)
             if restaurant_response.accepted:
@@ -272,6 +276,11 @@ class OrderService:
                 ),
             )
         raise RuntimeError("pending order has no final response")
+
+    @staticmethod
+    def ensure_owner(order: Order, user_id: UUID) -> None:
+        if order.user_id != user_id:
+            raise ResourceNotFoundError("Order not found")
 
     @staticmethod
     def _calculate_request_hash(request: CreateOrderRequest) -> str:

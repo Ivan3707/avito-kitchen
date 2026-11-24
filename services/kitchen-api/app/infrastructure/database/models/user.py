@@ -31,7 +31,7 @@ class User(TimestampMixin, Base):
         Text,
         nullable=False,
     )
-    role: Mapped[UserRole] = mapped_column(
+    role: Mapped[str] = mapped_column(
         String,
         nullable=False,
         default=UserRole.CUSTOMER,

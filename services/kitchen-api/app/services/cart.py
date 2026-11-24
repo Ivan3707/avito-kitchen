@@ -149,6 +149,7 @@ class CartService:
         if branch is None:
             raise ResourceNotFoundError("Branch not found")
 
+        await uow.carts.lock_user_branch(user_id, branch_id)
         cart = await uow.carts.get_by_user_and_branch(
             user_id=user_id,
             branch_id=branch_id,
@@ -162,6 +163,7 @@ class CartService:
                 id=uuid4(),
                 user_id=user_id,
                 branch_id=branch_id,
+                items=[],
             )
         )
 
@@ -244,6 +246,8 @@ class CartService:
                 existing = await uow.orders.get_by_external_id(
                     restaurant.id, request.order_id
                 )
+                if existing is not None:
+                    OrderService.ensure_owner(existing, user.id)
                 if existing is not None and existing.status != "pending":
                     stored = OrderService.stored_response(existing)
                     return CheckoutResponse(

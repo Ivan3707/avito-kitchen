@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import selectinload
 
 from app.infrastructure.database.models.cart import Cart
@@ -10,6 +10,16 @@ from app.infrastructure.repositories.base import BaseRepository
 
 class CartRepository(BaseRepository[Cart]):
     model = Cart
+
+    async def lock_user_branch(
+        self,
+        user_id: UUID,
+        branch_id: UUID,
+    ) -> None:
+        await self.session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 2))"),
+            {"key": f"cart:{user_id}:{branch_id}"},
+        )
 
     async def get_with_items(
         self,
