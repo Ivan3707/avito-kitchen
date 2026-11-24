@@ -3,7 +3,12 @@ openapi: 3.1.0
 info:
   title: Avito Kitchen API
   description: |
-    MVP API сервиса Avito.Kitchen.
+    HTTP API учебного backend-проекта Avito-Kitchen.
+
+    Спецификация описывает текущие маршруты Kitchen API, а не будущие
+    контракты Demo Restaurant, аутентификации или Kafka. X-User-Email —
+    временная идентификация покупателя, не механизм аутентификации.
+    Межсервисная аутентификация пока не реализована.
 
     API разделён на две части:
 
@@ -72,6 +77,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/BranchResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /api/v1/branches/{branch_id}/menu:
     get:
@@ -94,6 +101,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BranchMenuResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   # ============================================================
   # CLIENT API — CART
@@ -115,6 +124,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CartResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
     # ========================================================
     # ADD CART ITEM
@@ -142,6 +153,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CartResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   # ============================================================
   # UPDATE CART ITEM
@@ -170,6 +187,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CartResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
     delete:
       tags:
@@ -187,6 +208,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CartResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   # ============================================================
   # CHECKOUT
@@ -214,6 +239,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CheckoutResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   # ============================================================
   # RESTAURANT INTEGRATION API
@@ -228,22 +255,76 @@ paths:
       description: |
         Accepts a full snapshot of the restaurant catalog.
 
-        snapshot_id identifies one immutable full snapshot. schema_version
-        identifies the wire format. generated_at orders complete snapshots,
-        while branch_version prevents an older branch state from replacing
-        a newer one. Duplicate and stale snapshots are ignored atomically.
+        Accepts schema_version=3 only. snapshot_id identifies a logical snapshot;
+        catalog_revision is the non-negative, monotonic version of the entire
+        restaurant catalog. generated_at is a timezone-aware diagnostic timestamp,
+        not an ordering key. branch_version is not part of this wire contract.
+
+        Kitchen serializes concurrent synchronization per restaurant and applies
+        a newer full snapshot atomically, including jumps across revisions.
+        Missing branches and menu items are deactivated; missing relations are
+        made unavailable. Historical order references are preserved.
+
+        Kitchen computes SHA-256 over canonical business content, excluding
+        transport metadata (including snapshot_id, generated_at, schema_version
+        and catalog_revision). The order of arrays does not affect the checksum.
+        The same current revision with different business content, or reuse of a
+        known snapshot_id with a different restaurant, revision or checksum,
+        results in HTTP 409. An older revision is ignored. A repeated known
+        snapshot is ignored; a new ID with the same current revision and checksum
+        is also ignored. Current revision and checksum outlive history cleanup.
+        History older than 30 days is cleaned during subsequent synchronization
+        of the corresponding restaurant, not by an independent scheduler.
+
+        A retry of the same logical delivery must preserve the original payload,
+        snapshot_id and revision. Building another snapshot creates a new ID.
+        Partial updates are not accepted by this endpoint.
 
         The snapshot contains:
         - restaurant information;
         - all restaurant branches;
         - menu and menu items;
-        - availability of every menu item in every branch.
+        - price (integer kopecks, RUB) and availability of every menu item in every branch.
+
+        External IDs are unique within the corresponding collections. Availability
+        must contain exactly one entry for each branch, with exactly one entry for
+        each menu item. Inactive branches cannot accept orders; inactive branches
+        or items cannot have available items. Available items require positive prices.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: "#/components/schemas/SyncPayload"
+            example:
+              snapshot_id: "c5e7e9a1-9cb7-4e74-9e41-0b5371ee5b61"
+              schema_version: 3
+              catalog_revision: 1
+              generated_at: "2026-11-24T12:00:00Z"
+              restaurant:
+                external_id: restaurant-001
+                name: Demo Restaurant
+                description: null
+              branches:
+                - external_id: branch-001
+                  name: Central branch
+                  address: Main Street 1
+                  is_active: true
+                  is_accepting_orders: true
+              menu:
+                external_id: menu-001
+                name: Main Menu
+                items:
+                  - external_id: item-001
+                    name: Pizza
+                    description: null
+                    is_active: true
+              availability:
+                - branch_external_id: branch-001
+                  items:
+                    - menu_item_external_id: item-001
+                      is_available: true
+                      price: 35000
       responses:
         "200":
           description: Synchronization result
@@ -251,6 +332,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SyncResponse"
+        "409":
+          description: Conflicting snapshot identity or different business content for the current revision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                detail: catalog revision already exists with different business content
+        "422":
+          description: Invalid snapshot (including unsupported schema_version or invalid cross-references).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HTTPValidationError"
 
   /integration/v1/orders/validate:
     post:
@@ -280,6 +375,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OrderValidationResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /integration/v1/orders:
     post:
@@ -297,12 +394,15 @@ paths:
         retries of the same logical operation.
 
         If the same order_id is received with the same request payload,
-        the previously stored successful result is returned.
+        a previously stored final result is returned when available.
 
         If the same order_id is received with a different request payload,
         the request is rejected as a business validation result.
 
         An accepted=false response is returned with HTTP 200.
+        RESTAURANT_TIMEOUT indicates an unknown result, not a confirmed
+        business rejection; retry the original operation with the same order_id.
+        Automatic background recovery is not implemented in this baseline.
 
         The Kitchen API first validates the requested order against
         its current catalog and then sends the order to the restaurant.
@@ -321,6 +421,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CreateOrderResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
 # ==============================================================
 # COMPONENTS
@@ -356,7 +458,7 @@ components:
       name: X-User-Email
       in: header
       required: true
-      description: Customer email used to identify the customer
+      description: Temporary customer identifier; not proof of identity or authentication.
       schema:
         type: string
         minLength: 1
@@ -365,7 +467,59 @@ components:
   # COMMON SCHEMAS
   # ============================================================
 
+  responses:
+    NotFound:
+      description: Requested resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: Request conflicts with current state.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ValidationError:
+      description: Request validation failed (FastAPI/Pydantic).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/HTTPValidationError"
+
   schemas:
+
+    ErrorResponse:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string
+
+    HTTPValidationError:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationError"
+
+    ValidationError:
+      type: object
+      required: [loc, msg, type]
+      properties:
+        loc:
+          type: array
+          items:
+            anyOf:
+              - type: string
+              - type: integer
+        msg:
+          type: string
+        type:
+          type: string
+      additionalProperties: true
 
     NonEmptyString:
       type: string
@@ -552,8 +706,9 @@ components:
         - items
       properties:
         id:
-          type: string
+          type: [string, "null"]
           format: uuid
+          description: Null when no cart exists.
 
         branch_id:
           type: string
@@ -612,6 +767,7 @@ components:
 
     RestaurantSync:
       type: object
+      additionalProperties: false
       required:
         - external_id
         - name
@@ -630,13 +786,20 @@ components:
 
     BranchSync:
       type: object
+      additionalProperties: false
+      if:
+        properties:
+          is_active: {const: false}
+        required: [is_active]
+      then:
+        properties:
+          is_accepting_orders: {const: false}
       required:
         - external_id
         - name
         - address
         - is_active
         - is_accepting_orders
-        - branch_version
       properties:
         external_id:
           $ref: "#/components/schemas/NonEmptyString"
@@ -653,12 +816,9 @@ components:
         is_accepting_orders:
           type: boolean
 
-        branch_version:
-          type: integer
-          minimum: 1
-
     MenuItemSync:
       type: object
+      additionalProperties: false
       required:
         - external_id
         - name
@@ -681,6 +841,7 @@ components:
 
     MenuSync:
       type: object
+      additionalProperties: false
       required:
         - external_id
         - name
@@ -699,6 +860,14 @@ components:
 
     MenuItemAvailabilitySync:
       type: object
+      additionalProperties: false
+      if:
+        properties:
+          is_available: {const: true}
+        required: [is_available]
+      then:
+        properties:
+          price: {type: integer, exclusiveMinimum: 0}
       required:
         - menu_item_external_id
         - is_available
@@ -715,10 +884,11 @@ components:
             - integer
             - "null"
           exclusiveMinimum: 0
-          description: Required branch price; null is allowed only when unavailable.
+          description: Price in integer kopecks (RUB); null is allowed only when unavailable.
 
     BranchAvailabilitySync:
       type: object
+      additionalProperties: false
       required:
         - branch_external_id
         - items
@@ -733,9 +903,11 @@ components:
 
     SyncPayload:
       type: object
+      additionalProperties: false
       required:
         - snapshot_id
         - schema_version
+        - catalog_revision
         - generated_at
         - restaurant
         - branches
@@ -748,11 +920,18 @@ components:
 
         schema_version:
           type: integer
-          enum: [2]
+          const: 3
+          description: Full snapshot wire contract version.
+
+        catalog_revision:
+          type: integer
+          minimum: 0
+          description: Monotonic revision of the complete restaurant catalog; 0 is valid.
 
         generated_at:
           type: string
           format: date-time
+          description: Timezone-aware generation timestamp; not used for ordering.
 
         restaurant:
           $ref: "#/components/schemas/RestaurantSync"
@@ -805,7 +984,9 @@ components:
           type: string
           enum:
             - DUPLICATE_SNAPSHOT
+            - DUPLICATE_STATE
             - STALE_SNAPSHOT
+          description: Known snapshot ID, identical current revision and checksum, or older revision, respectively.
 
     SyncResponse:
       oneOf:
@@ -838,9 +1019,11 @@ components:
         unit_price:
           type: integer
           exclusiveMinimum: 0
+          description: Unit price in integer kopecks (RUB).
 
     OrderValidationRequest:
       type: object
+      description: Each menu_item_external_id must occur at most once in items.
       required:
         - restaurant_external_id
         - branch_external_id
@@ -860,6 +1043,7 @@ components:
 
     CreateOrderRequest:
       type: object
+      description: Each menu_item_external_id must occur at most once in items.
       required:
         - order_id
         - restaurant_external_id
@@ -968,17 +1152,3 @@ components:
         restaurant_order_id is null.
 
         order_id may be null for rejected orders.
-
-    IdempotencyKeyReuseError:
-      type: object
-      required:
-        - code
-        - message
-      properties:
-        code:
-          type: string
-          enum:
-            - IDEMPOTENCY_KEY_REUSE
-
-        message:
-          $ref: "#/components/schemas/NonEmptyString"
