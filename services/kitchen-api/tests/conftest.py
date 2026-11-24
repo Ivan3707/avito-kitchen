@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 
 import pytest_asyncio
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -27,8 +28,19 @@ class TestSettings(BaseSettings):
 test_settings = TestSettings()
 
 
+def _assert_disposable_database() -> None:
+    url = make_url(test_settings.test_database_url)
+    if url.host not in {"localhost", "127.0.0.1"} or (
+        url.database is None or "test" not in url.database
+    ):
+        raise RuntimeError(
+            "TEST_DATABASE_URL must target a localhost disposable test database"
+        )
+
+
 @pytest_asyncio.fixture(scope="session")
 async def test_engine() -> AsyncIterator[AsyncEngine]:
+    _assert_disposable_database()
     engine = create_async_engine(
         test_settings.test_database_url,
         poolclass=NullPool,

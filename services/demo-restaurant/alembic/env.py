@@ -4,11 +4,11 @@ from logging.config import fileConfig
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
-from app.core.config import settings
-from app.infrastructure.database.base import Base
-from app.infrastructure.database import models
 
 from alembic import context
+from app.core.config import settings
+from app.infrastructure.database import models  # noqa: F401
+from app.infrastructure.database.base import Base
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

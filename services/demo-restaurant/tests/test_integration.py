@@ -27,7 +27,8 @@ async def test_sync_sends_current_contract(monkeypatch) -> None:
     payload = SyncPayload.model_validate(
         {
             "snapshot_id": uuid4(),
-            "schema_version": 2,
+            "schema_version": 3,
+            "catalog_revision": 7,
             "generated_at": datetime.now(UTC),
             "restaurant": {
                 "external_id": "restaurant-1",
@@ -46,16 +47,22 @@ async def test_sync_sends_current_contract(monkeypatch) -> None:
     monkeypatch.setattr(service, "build_sync_payload", build_payload)
     response = await service.sync()
     assert response.status == "updated"
-    assert client.payload["schema_version"] == 2
-    assert "version" not in client.payload
+    assert client.payload["schema_version"] == 3
+    assert client.payload["catalog_revision"] == 7
+    assert all(
+        "branch_version" not in branch
+        for branch in client.payload["branches"]
+    )
 
 
-def test_v1_snapshot_is_rejected() -> None:
+@pytest.mark.parametrize("schema_version", [1, 2])
+def test_legacy_snapshot_is_rejected(schema_version: int) -> None:
     with pytest.raises(ValidationError):
         SyncPayload.model_validate(
             {
                 "snapshot_id": uuid4(),
-                "schema_version": 1,
+                "schema_version": schema_version,
+                "catalog_revision": 0,
                 "generated_at": datetime.now(UTC),
                 "restaurant": {
                     "external_id": "restaurant-1",

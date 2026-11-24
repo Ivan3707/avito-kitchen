@@ -10,12 +10,15 @@ from app.api.integration import get_uow, get_uow_factory, router
 from app.infrastructure.clients.restaurant import RestaurantClient
 from app.infrastructure.unit_of_work import UnitOfWork
 from app.integration.schemas.orders import RestaurantOrderResponse
+from app.main import handle_conflict
+from app.services.errors import ConflictError
 
 
 @pytest.fixture
 def api_app(test_session_factory) -> FastAPI:
     app = FastAPI()
     app.include_router(router)
+    app.add_exception_handler(ConflictError, handle_conflict)
     app.dependency_overrides[get_uow] = lambda: UnitOfWork(
         test_session_factory
     )
@@ -33,12 +36,13 @@ async def client(api_app: FastAPI):
         yield http_client
 
 
-def sync_payload(*, snapshot_id=None, generated_at=None, branch_version=1):
+def sync_payload(*, snapshot_id=None, generated_at=None, revision=0):
     restaurant_id = f"restaurant-{uuid4()}"
     branch_id = f"branch-{uuid4()}"
     return {
         "snapshot_id": str(snapshot_id or uuid4()),
-        "schema_version": 2,
+        "schema_version": 3,
+        "catalog_revision": revision,
         "generated_at": (generated_at or datetime.now(UTC)).isoformat(),
         "restaurant": {
             "external_id": restaurant_id,
@@ -52,7 +56,6 @@ def sync_payload(*, snapshot_id=None, generated_at=None, branch_version=1):
                 "address": "Address",
                 "is_active": True,
                 "is_accepting_orders": True,
-                "branch_version": branch_version,
             }
         ],
         "menu": {
@@ -90,6 +93,31 @@ async def test_sync_endpoint_updates_and_deduplicates(client):
     assert first.status_code == 200
     assert first.json()["snapshot_id"] == payload["snapshot_id"]
     assert duplicate.json()["reason"] == "DUPLICATE_SNAPSHOT"
+
+
+@pytest.mark.asyncio
+async def test_sync_endpoint_rejects_v2(client):
+    payload = sync_payload()
+    payload["schema_version"] = 2
+    response = await client.post("/integration/v1/sync", json=payload)
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_sync_endpoint_reports_integrity_conflict(client):
+    payload = sync_payload(revision=1)
+    first = await client.post("/integration/v1/sync", json=payload)
+    conflicting = dict(payload)
+    conflicting["snapshot_id"] = str(uuid4())
+    conflicting["restaurant"] = dict(payload["restaurant"])
+    conflicting["restaurant"]["name"] = "Other name"
+    response = await client.post(
+        "/integration/v1/sync",
+        json=conflicting,
+    )
+    assert first.status_code == 200
+    assert response.status_code == 409
+    assert "different business content" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
