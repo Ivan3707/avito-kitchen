@@ -7,7 +7,6 @@ from app.infrastructure.clients.restaurant import (
     RestaurantCommunicationError,
     RestaurantTimeoutError,
 )
-from app.infrastructure.database.models.customer import Customer
 from app.infrastructure.database.models.order import Order
 from app.infrastructure.database.models.order_item import OrderItem
 from app.infrastructure.unit_of_work import UnitOfWork
@@ -19,6 +18,7 @@ from app.integration.schemas.orders import (
     OrderValidationResponse,
     ValidationIssue,
 )
+from app.services.errors import ResourceNotFoundError
 
 UowFactory = Callable[[], UnitOfWork]
 
@@ -117,7 +117,7 @@ class OrderService:
         self,
         uow_factory: UowFactory,
         request: CreateOrderRequest,
-        customer_email: str,
+        user_email: str,
         restaurant_client: RestaurantClient,
     ) -> CreateOrderResponse:
         request_hash = self._calculate_request_hash(request)
@@ -130,6 +130,9 @@ class OrderService:
                     BusinessErrorCode.BRANCH_UNAVAILABLE,
                     "Restaurant or branch is unavailable",
                 )
+            user = await uow.users.get_by_email(user_email)
+            if user is None:
+                raise ResourceNotFoundError("User not found")
             await uow.orders.lock_external_id(restaurant.id, request.order_id)
             existing = await uow.orders.get_by_external_id_for_update(
                 restaurant.id, request.order_id
@@ -159,16 +162,9 @@ class OrderService:
                 branch = await uow.restaurant_branches.get_by_restaurant_and_external_id(
                     restaurant.id, request.branch_external_id
                 )
-                await uow.customers.lock_email(customer_email)
-                customer = await uow.customers.get_by_email(customer_email)
-                if customer is None:
-                    customer = uow.customers.add(
-                        Customer(email=customer_email)
-                    )
-                    await uow.flush()
                 order = uow.orders.add(
                     Order(
-                        customer_id=customer.id,
+                        user_id=user.id,
                         restaurant_id=restaurant.id,
                         branch_id=branch.id,
                         external_order_id=request.order_id,

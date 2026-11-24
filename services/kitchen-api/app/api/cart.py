@@ -41,14 +41,14 @@ async def get_cart(
     service = CartService()
 
     async with uow:
-        customer = await uow.customers.get_by_email(x_user_email)
+        user = await uow.users.get_by_email(x_user_email)
 
-        if customer is None:
+        if user is None:
             return CartResponse(id=None, branch_id=branch_id, items=[])
 
         return await service.get_cart(
             uow=uow,
-            customer_id=customer.id,
+            user_id=user.id,
             branch_id=branch_id,
         )
 
@@ -66,18 +66,14 @@ async def add_cart_item(
     service = CartService()
 
     async with uow:
-        await uow.customers.lock_email(x_user_email)
-        customer = await uow.customers.get_by_email(x_user_email)
+        user = await uow.users.get_by_email(x_user_email)
 
-        if customer is None:
-            from app.infrastructure.database.models.customer import Customer
-
-            customer = uow.customers.add(Customer(email=x_user_email))
-            await uow.flush()
+        if user is None:
+            raise ResourceNotFoundError("User not found")
 
         return await service.add_item(
             uow=uow,
-            customer_id=customer.id,
+            user_id=user.id,
             branch_id=branch_id,
             request=request,
         )
@@ -97,14 +93,14 @@ async def update_cart_item(
     service = CartService()
 
     async with uow:
-        customer = await uow.customers.get_by_email(x_user_email)
+        user = await uow.users.get_by_email(x_user_email)
 
-        if customer is None:
-            raise ResourceNotFoundError("Customer not found")
+        if user is None:
+            raise ResourceNotFoundError("User not found")
 
         return await service.update_item(
             uow=uow,
-            customer_id=customer.id,
+            user_id=user.id,
             branch_id=branch_id,
             menu_item_id=menu_item_id,
             request=request,
@@ -124,14 +120,14 @@ async def remove_cart_item(
     service = CartService()
 
     async with uow:
-        customer = await uow.customers.get_by_email(x_user_email)
+        user = await uow.users.get_by_email(x_user_email)
 
-        if customer is None:
-            raise ResourceNotFoundError("Customer not found")
+        if user is None:
+            raise ResourceNotFoundError("User not found")
 
         return await service.remove_item(
             uow=uow,
-            customer_id=customer.id,
+            user_id=user.id,
             branch_id=branch_id,
             menu_item_id=menu_item_id,
         )
@@ -150,7 +146,7 @@ async def checkout_cart(
     service = CartService()
     return await service.checkout(
         uow_factory=uow_factory,
-        customer_email=x_user_email,
+        user_email=x_user_email,
         branch_id=branch_id,
         request=request,
     )

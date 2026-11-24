@@ -5,13 +5,13 @@ import pytest
 from app.infrastructure.database.models.branch_menu_item import BranchMenuItem
 from app.infrastructure.database.models.cart import Cart
 from app.infrastructure.database.models.cart_item import CartItem
-from app.infrastructure.database.models.customer import Customer
 from app.infrastructure.database.models.menu import Menu
 from app.infrastructure.database.models.menu_item import MenuItem
 from app.infrastructure.database.models.restaurant import Restaurant
 from app.infrastructure.database.models.restaurant_branch import (
     RestaurantBranch,
 )
+from app.infrastructure.database.models.user import User
 from app.infrastructure.unit_of_work import UnitOfWork
 from app.services.cart import CartService
 
@@ -27,8 +27,11 @@ async def test_cart_uses_selected_branch_price(
     relation_available: bool,
     expected_available: bool,
 ) -> None:
-    customer = uow.customers.add(
-        Customer(email=f"customer-{uuid4()}@example.com")
+    user = uow.users.add(
+        User(
+            email=f"user-{uuid4()}@example.com",
+            password_hash="test-password-hash",
+        )
     )
     restaurant = uow.restaurants.add(
         Restaurant(
@@ -75,7 +78,7 @@ async def test_cart_uses_selected_branch_price(
         )
     )
     cart = uow.carts.add(
-        Cart(customer_id=customer.id, branch_id=branch.id)
+        Cart(user_id=user.id, branch_id=branch.id)
     )
     await uow.session.flush()
     uow.session.add(
@@ -87,7 +90,7 @@ async def test_cart_uses_selected_branch_price(
     )
     await uow.session.flush()
 
-    response = await CartService().get_cart(uow, customer.id, branch.id)
+    response = await CartService().get_cart(uow, user.id, branch.id)
 
     assert response.items[0].price == price
     assert response.items[0].is_available is expected_available

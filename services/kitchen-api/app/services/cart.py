@@ -26,11 +26,11 @@ class CartService:
     async def get_cart(
         self,
         uow: UnitOfWork,
-        customer_id: UUID,
+        user_id: UUID,
         branch_id: UUID,
     ) -> CartResponse:
-        cart = await uow.carts.get_by_customer_and_branch(
-            customer_id=customer_id,
+        cart = await uow.carts.get_by_user_and_branch(
+            user_id=user_id,
             branch_id=branch_id,
         )
         if cart is None:
@@ -40,13 +40,13 @@ class CartService:
     async def add_item(
         self,
         uow: UnitOfWork,
-        customer_id: UUID,
+        user_id: UUID,
         branch_id: UUID,
         request: AddCartItemRequest,
     ) -> CartResponse:
         cart = await self._get_or_create_cart(
             uow=uow,
-            customer_id=customer_id,
+            user_id=user_id,
             branch_id=branch_id,
         )
 
@@ -90,14 +90,14 @@ class CartService:
     async def update_item(
         self,
         uow: UnitOfWork,
-        customer_id: UUID,
+        user_id: UUID,
         branch_id: UUID,
         menu_item_id: UUID,
         request: UpdateCartItemRequest,
     ) -> CartResponse:
         cart = await self._get_cart(
             uow=uow,
-            customer_id=customer_id,
+            user_id=user_id,
             branch_id=branch_id,
         )
 
@@ -116,13 +116,13 @@ class CartService:
     async def remove_item(
         self,
         uow: UnitOfWork,
-        customer_id: UUID,
+        user_id: UUID,
         branch_id: UUID,
         menu_item_id: UUID,
     ) -> CartResponse:
         cart = await self._get_cart(
             uow=uow,
-            customer_id=customer_id,
+            user_id=user_id,
             branch_id=branch_id,
         )
 
@@ -141,7 +141,7 @@ class CartService:
     async def _get_or_create_cart(
         self,
         uow: UnitOfWork,
-        customer_id: UUID,
+        user_id: UUID,
         branch_id: UUID,
     ) -> Cart:
         branch = await uow.restaurant_branches.get_by_id(branch_id)
@@ -149,8 +149,8 @@ class CartService:
         if branch is None:
             raise ResourceNotFoundError("Branch not found")
 
-        cart = await uow.carts.get_by_customer_and_branch(
-            customer_id=customer_id,
+        cart = await uow.carts.get_by_user_and_branch(
+            user_id=user_id,
             branch_id=branch_id,
         )
 
@@ -160,7 +160,7 @@ class CartService:
         return uow.carts.add(
             Cart(
                 id=uuid4(),
-                customer_id=customer_id,
+                user_id=user_id,
                 branch_id=branch_id,
             )
         )
@@ -168,11 +168,11 @@ class CartService:
     async def _get_cart(
         self,
         uow: UnitOfWork,
-        customer_id: UUID,
+        user_id: UUID,
         branch_id: UUID,
     ) -> Cart:
-        cart = await uow.carts.get_by_customer_and_branch(
-            customer_id=customer_id,
+        cart = await uow.carts.get_by_user_and_branch(
+            user_id=user_id,
             branch_id=branch_id,
         )
 
@@ -217,13 +217,13 @@ class CartService:
     async def checkout(
         self,
         uow_factory: Callable[[], UnitOfWork],
-        customer_email: str,
+        user_email: str,
         branch_id: UUID,
         request: CheckoutRequest,
     ) -> CheckoutResponse:
         async with uow_factory() as uow:
-            customer = await uow.customers.get_by_email(customer_email)
-            if customer is None:
+            user = await uow.users.get_by_email(user_email)
+            if user is None:
                 return CheckoutResponse(
                     accepted=False, reason="Cart not found"
                 )
@@ -237,8 +237,8 @@ class CartService:
                     accepted=False, reason="Branch is unavailable"
                 )
             restaurant = await uow.restaurants.get_by_id(branch.restaurant_id)
-            cart = await uow.carts.get_by_customer_and_branch_for_update(
-                customer.id, branch_id
+            cart = await uow.carts.get_by_user_and_branch_for_update(
+                user.id, branch_id
             )
             if cart is None or not cart.items:
                 existing = await uow.orders.get_by_external_id(
@@ -300,7 +300,7 @@ class CartService:
         result = await order_service.create_order(
             uow_factory=uow_factory,
             request=order_request,
-            customer_email=customer_email,
+            user_email=user_email,
             restaurant_client=restaurant_client,
         )
 
@@ -315,9 +315,9 @@ class CartService:
             )
 
         async with uow_factory() as uow:
-            customer = await uow.customers.get_by_email(customer_email)
-            cart = await uow.carts.get_by_customer_and_branch_for_update(
-                customer.id, branch_id
+            user = await uow.users.get_by_email(user_email)
+            cart = await uow.carts.get_by_user_and_branch_for_update(
+                user.id, branch_id
             )
             for item in list(cart.items):
                 ordered = ordered_quantities.get(item.menu_item_id, 0)

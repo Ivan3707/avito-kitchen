@@ -20,10 +20,10 @@ class Cart(TimestampMixin, Base):
         default=uuid4,
     )
 
-    customer_id: Mapped[UUID] = mapped_column(
+    user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey(
-            "customers.id",
+            "users.id",
             ondelete="CASCADE",
         ),
         nullable=False,
@@ -40,9 +40,9 @@ class Cart(TimestampMixin, Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "customer_id",
+            "user_id",
             "branch_id",
-            name="uq_cart_customer_branch",
+            name="uq_cart_user_branch",
         ),
     )
 

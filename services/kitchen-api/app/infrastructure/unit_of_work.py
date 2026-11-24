@@ -4,7 +4,6 @@ from app.infrastructure.repositories.branch_menu_item import (
     BranchMenuItemRepository,
 )
 from app.infrastructure.repositories.cart import CartRepository
-from app.infrastructure.repositories.customer import CustomerRepository
 from app.infrastructure.repositories.menu import MenuRepository
 from app.infrastructure.repositories.menu_item import MenuItemRepository
 from app.infrastructure.repositories.order import OrderRepository
@@ -16,6 +15,7 @@ from app.infrastructure.repositories.restaurant_branch import (
 from app.infrastructure.repositories.sync_snapshot import (
     SyncSnapshotRepository,
 )
+from app.infrastructure.repositories.user import UserRepository
 
 
 class UnitOfWork:
@@ -36,7 +36,7 @@ class UnitOfWork:
             self.session = self.session_factory()
 
             self.restaurants = RestaurantRepository(self.session)
-            self.customers = CustomerRepository(self.session)
+            self.users = UserRepository(self.session)
             self.restaurant_branches = RestaurantBranchRepository(self.session)
             self.menus = MenuRepository(self.session)
             self.menu_items = MenuItemRepository(self.session)

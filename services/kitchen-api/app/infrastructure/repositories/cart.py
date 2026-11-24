@@ -22,31 +22,31 @@ class CartRepository(BaseRepository[Cart]):
         )
         return result.scalar_one_or_none()
 
-    async def get_by_customer_and_branch(
+    async def get_by_user_and_branch(
         self,
-        customer_id: UUID,
+        user_id: UUID,
         branch_id: UUID,
     ) -> Cart | None:
         result = await self.session.execute(
             select(self.model)
             .options(selectinload(Cart.items).selectinload(CartItem.menu_item))
             .where(
-                self.model.customer_id == customer_id,
+                self.model.user_id == user_id,
                 self.model.branch_id == branch_id,
             )
         )
         return result.scalar_one_or_none()
 
-    async def get_by_customer_and_branch_for_update(
+    async def get_by_user_and_branch_for_update(
         self,
-        customer_id: UUID,
+        user_id: UUID,
         branch_id: UUID,
     ) -> Cart | None:
         result = await self.session.execute(
             select(self.model)
             .options(selectinload(Cart.items).selectinload(CartItem.menu_item))
             .where(
-                self.model.customer_id == customer_id,
+                self.model.user_id == user_id,
                 self.model.branch_id == branch_id,
             )
             .with_for_update()

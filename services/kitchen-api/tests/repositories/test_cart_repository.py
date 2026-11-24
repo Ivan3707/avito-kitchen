@@ -4,21 +4,22 @@ import pytest
 
 from app.infrastructure.database.models.cart import Cart
 from app.infrastructure.database.models.cart_item import CartItem
-from app.infrastructure.database.models.customer import Customer
 from app.infrastructure.database.models.menu import Menu
 from app.infrastructure.database.models.menu_item import MenuItem
 from app.infrastructure.database.models.restaurant import Restaurant
 from app.infrastructure.database.models.restaurant_branch import (
     RestaurantBranch,
 )
+from app.infrastructure.database.models.user import User
 from app.infrastructure.unit_of_work import UnitOfWork
 
 
 async def create_cart_dependencies(uow: UnitOfWork):
-    customer = Customer(
-        email=f"customer-{uuid4()}@example.com",
+    user = User(
+        email=f"user-{uuid4()}@example.com",
+        password_hash="test-password-hash",
     )
-    uow.customers.add(customer)
+    uow.users.add(user)
 
     restaurant = Restaurant(
         external_id=f"restaurant-{uuid4()}",
@@ -38,15 +39,15 @@ async def create_cart_dependencies(uow: UnitOfWork):
 
     await uow.session.flush()
 
-    return customer, restaurant, branch
+    return user, restaurant, branch
 
 
 @pytest.mark.asyncio
 async def test_add_and_get_by_id(uow: UnitOfWork):
-    customer, _, branch = await create_cart_dependencies(uow)
+    user, _, branch = await create_cart_dependencies(uow)
 
     cart = Cart(
-        customer_id=customer.id,
+        user_id=user.id,
         branch_id=branch.id,
     )
 
@@ -58,7 +59,7 @@ async def test_add_and_get_by_id(uow: UnitOfWork):
 
     assert saved_cart is not None
     assert saved_cart.id == cart.id
-    assert saved_cart.customer_id == customer.id
+    assert saved_cart.user_id == user.id
     assert saved_cart.branch_id == branch.id
 
 
@@ -73,7 +74,7 @@ async def test_get_by_id_returns_none(
 
 @pytest.mark.asyncio
 async def test_get_with_items(uow: UnitOfWork):
-    customer, restaurant, branch = await create_cart_dependencies(uow)
+    user, restaurant, branch = await create_cart_dependencies(uow)
 
     menu = Menu(
         restaurant_id=restaurant.id,
@@ -107,7 +108,7 @@ async def test_get_with_items(uow: UnitOfWork):
     await uow.session.flush()
 
     cart = Cart(
-        customer_id=customer.id,
+        user_id=user.id,
         branch_id=branch.id,
     )
     uow.carts.add(cart)

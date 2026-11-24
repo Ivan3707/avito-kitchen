@@ -5,10 +5,10 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import select
 
-from app.infrastructure.database.models.customer import Customer
 from app.infrastructure.database.models.order import Order
 from app.infrastructure.database.models.order_item import OrderItem
 from app.infrastructure.database.models.restaurant import Restaurant
+from app.infrastructure.database.models.user import User
 from app.infrastructure.unit_of_work import UnitOfWork
 from app.integration.schemas.sync import SyncPayload
 from app.services.errors import ConflictError
@@ -333,13 +333,16 @@ async def test_full_snapshot_preserves_historical_order_references(
     )[0]
     menu = await uow.menus.get_by_restaurant_id(restaurant.id)
     item = (await uow.menu_items.get_by_menu_id(menu.id))[0]
-    customer = uow.customers.add(
-        Customer(email=f"{uuid4()}@example.com")
+    user = uow.users.add(
+        User(
+            email=f"{uuid4()}@example.com",
+            password_hash="test-password-hash",
+        )
     )
     await uow.flush()
     order = uow.orders.add(
         Order(
-            customer_id=customer.id,
+            user_id=user.id,
             restaurant_id=restaurant.id,
             branch_id=branch.id,
             external_order_id=str(uuid4()),
