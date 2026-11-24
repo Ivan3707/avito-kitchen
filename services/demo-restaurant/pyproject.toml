@@ -43,6 +43,11 @@ ignore = [
     "E501",
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"alembic/versions/7c6cc5520fdb_create_restaurant_database_schema.py" = ["I001"]
+"alembic/versions/ce8f0a0682ba_add_restaurant_orders_and_move_menu_.py" = ["I001"]
+"alembic/versions/f2a8c4d6e710_add_catalog_metadata.py" = ["I001"]
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"

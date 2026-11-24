@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import pytest
 import pytest_asyncio
 from sqlalchemy import select, update
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -20,7 +21,7 @@ from app.infrastructure.unit_of_work import UnitOfWork
 @dataclass(frozen=True)
 class CatalogStateDatabase:
     session_factory: async_sessionmaker[AsyncSession]
-    migrated_initial_revision: int
+    fixture_initial_revision: int
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -28,6 +29,13 @@ async def catalog_state_database() -> AsyncIterator[CatalogStateDatabase]:
     database_url = os.getenv("TEST_DATABASE_URL")
     if database_url is None:
         pytest.skip("TEST_DATABASE_URL is required for catalog state DB tests")
+    url = make_url(database_url)
+    if url.host not in {"localhost", "127.0.0.1"} or (
+        url.database is None or "test" not in url.database
+    ):
+        raise RuntimeError(
+            "TEST_DATABASE_URL must target a localhost disposable test database"
+        )
 
     engine = create_async_engine(database_url, poolclass=NullPool)
     session_factory = async_sessionmaker(
@@ -36,6 +44,10 @@ async def catalog_state_database() -> AsyncIterator[CatalogStateDatabase]:
         expire_on_commit=False,
     )
     async with session_factory() as session:
+        await session.execute(
+            update(CatalogState).values(catalog_revision=0)
+        )
+        await session.commit()
         initial_revision = await session.scalar(
             select(CatalogState.catalog_revision).where(CatalogState.id == 1)
         )
@@ -44,7 +56,7 @@ async def catalog_state_database() -> AsyncIterator[CatalogStateDatabase]:
 
     yield CatalogStateDatabase(
         session_factory=session_factory,
-        migrated_initial_revision=initial_revision,
+        fixture_initial_revision=initial_revision,
     )
     await engine.dispose()
 
@@ -72,7 +84,7 @@ async def get_revision(
 async def test_initial_catalog_revision_is_zero(
     catalog_state_database: CatalogStateDatabase,
 ) -> None:
-    assert catalog_state_database.migrated_initial_revision == 0
+    assert catalog_state_database.fixture_initial_revision == 0
     assert await get_revision(catalog_state_database.session_factory) == 0
 
 

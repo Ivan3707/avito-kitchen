@@ -14,7 +14,8 @@ from app.integration.schemas.sync import (
 def payload_data() -> dict:
     return {
         "snapshot_id": str(uuid4()),
-        "schema_version": 2,
+        "schema_version": 3,
+        "catalog_revision": 7,
         "generated_at": datetime.now(UTC).isoformat(),
         "restaurant": {
             "external_id": "restaurant-1",
@@ -28,7 +29,6 @@ def payload_data() -> dict:
                 "address": "Address",
                 "is_active": True,
                 "is_accepting_orders": True,
-                "branch_version": 3,
             }
         ],
         "menu": {
@@ -60,8 +60,8 @@ def payload_data() -> dict:
 
 def test_valid_sync_payload() -> None:
     payload = SyncPayload.model_validate(payload_data())
-    assert payload.schema_version == 2
-    assert payload.branches[0].branch_version == 3
+    assert payload.schema_version == 3
+    assert payload.catalog_revision == 7
 
 
 def test_snapshot_allows_empty_restaurant_catalog() -> None:
@@ -79,9 +79,23 @@ def test_generated_at_must_be_timezone_aware() -> None:
         SyncPayload.model_validate(data)
 
 
-def test_branch_version_must_be_positive() -> None:
+def test_branch_version_is_not_part_of_v3_contract() -> None:
     data = payload_data()
-    data["branches"][0]["branch_version"] = 0
+    data["branches"][0]["branch_version"] = 1
+    with pytest.raises(ValidationError):
+        SyncPayload.model_validate(data)
+
+
+def test_catalog_revision_must_be_non_negative() -> None:
+    data = payload_data()
+    data["catalog_revision"] = -1
+    with pytest.raises(ValidationError):
+        SyncPayload.model_validate(data)
+
+
+def test_catalog_revision_is_required() -> None:
+    data = payload_data()
+    del data["catalog_revision"]
     with pytest.raises(ValidationError):
         SyncPayload.model_validate(data)
 
@@ -89,6 +103,28 @@ def test_branch_version_must_be_positive() -> None:
 def test_duplicate_branch_ids_are_rejected() -> None:
     data = payload_data()
     data["branches"].append(dict(data["branches"][0]))
+    with pytest.raises(ValidationError):
+        SyncPayload.model_validate(data)
+
+
+def test_duplicate_menu_item_ids_are_rejected() -> None:
+    data = payload_data()
+    data["menu"]["items"].append(dict(data["menu"]["items"][0]))
+    with pytest.raises(ValidationError):
+        SyncPayload.model_validate(data)
+
+
+def test_duplicate_availability_branches_are_rejected() -> None:
+    data = payload_data()
+    data["availability"].append(dict(data["availability"][0]))
+    with pytest.raises(ValidationError):
+        SyncPayload.model_validate(data)
+
+
+def test_duplicate_availability_items_are_rejected() -> None:
+    data = payload_data()
+    item = dict(data["availability"][0]["items"][0])
+    data["availability"][0]["items"].append(item)
     with pytest.raises(ValidationError):
         SyncPayload.model_validate(data)
 
@@ -104,6 +140,13 @@ def test_inactive_branch_cannot_expose_available_item() -> None:
     data = payload_data()
     data["branches"][0]["is_active"] = False
     data["branches"][0]["is_accepting_orders"] = False
+    with pytest.raises(ValidationError):
+        SyncPayload.model_validate(data)
+
+
+def test_inactive_branch_cannot_accept_orders() -> None:
+    data = payload_data()
+    data["branches"][0]["is_active"] = False
     with pytest.raises(ValidationError):
         SyncPayload.model_validate(data)
 
@@ -145,9 +188,10 @@ def test_availability_price_is_required() -> None:
         SyncPayload.model_validate(data)
 
 
-def test_v1_snapshot_is_rejected() -> None:
+@pytest.mark.parametrize("schema_version", [1, 2])
+def test_legacy_snapshot_is_rejected(schema_version: int) -> None:
     data = payload_data()
-    data["schema_version"] = 1
+    data["schema_version"] = schema_version
     with pytest.raises(ValidationError):
         SyncPayload.model_validate(data)
 
