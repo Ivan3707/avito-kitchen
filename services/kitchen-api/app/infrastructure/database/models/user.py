@@ -53,4 +53,8 @@ class User(TimestampMixin, Base):
             "role IN ('customer', 'admin')",
             name="ck_user_role",
         ),
+        CheckConstraint(
+            "email = lower(btrim(email))",
+            name="ck_user_email_normalized",
+        ),
     )

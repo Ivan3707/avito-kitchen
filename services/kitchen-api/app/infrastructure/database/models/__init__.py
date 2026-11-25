@@ -11,6 +11,10 @@ from app.infrastructure.database.models.restaurant_branch import (
 )
 from app.infrastructure.database.models.sync_snapshot import SyncSnapshot
 from app.infrastructure.database.models.user import User, UserRole
+from app.infrastructure.database.models.user_action_token import (
+    TokenPurpose,
+    UserActionToken,
+)
 
 __all__ = [
     "BranchMenuItem",
@@ -25,4 +29,6 @@ __all__ = [
     "SyncSnapshot",
     "User",
     "UserRole",
+    "TokenPurpose",
+    "UserActionToken",
 ]

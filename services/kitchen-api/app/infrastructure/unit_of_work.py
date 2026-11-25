@@ -16,6 +16,9 @@ from app.infrastructure.repositories.sync_snapshot import (
     SyncSnapshotRepository,
 )
 from app.infrastructure.repositories.user import UserRepository
+from app.infrastructure.repositories.user_action_token import (
+    UserActionTokenRepository,
+)
 
 
 class UnitOfWork:
@@ -37,6 +40,7 @@ class UnitOfWork:
 
             self.restaurants = RestaurantRepository(self.session)
             self.users = UserRepository(self.session)
+            self.user_action_tokens = UserActionTokenRepository(self.session)
             self.restaurant_branches = RestaurantBranchRepository(self.session)
             self.menus = MenuRepository(self.session)
             self.menu_items = MenuItemRepository(self.session)

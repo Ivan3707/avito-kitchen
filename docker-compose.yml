@@ -22,14 +22,28 @@ services:
     container_name: avito-kitchen-api
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@kitchen-db:5432/kitchen
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      SMTP_SENDER: noreply@avito-kitchen.local
+      SMTP_TIMEOUT_SECONDS: 10
+      SMTP_USE_TLS: "false"
+      SMTP_START_TLS: "false"
+      EMAIL_VERIFICATION_BASE_URL: http://127.0.0.1:8000/docs
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
       kitchen-db:
         condition: service_healthy
+      mailpit:
+        condition: service_started
     command: >
       sh -c "uv run alembic upgrade head &&
         uv run uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  mailpit:
+    image: axllent/mailpit:v1.34.0
+    ports:
+      - "127.0.0.1:8025:8025"
 
   restaurant-db:
     image: postgres:16
