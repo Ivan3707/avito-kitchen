@@ -1,4 +1,5 @@
 import asyncio
+import heapq
 import math
 from collections import deque
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ class InMemoryRateLimiter:
                 "Rate limiter capacity and cleanup interval must be positive"
             )
         self._buckets: dict[tuple[str, str], _Bucket] = {}
+        self._expirations: list[tuple[float, tuple[str, str]]] = []
         self._lock = asyncio.Lock()
         self._max_buckets = max_buckets
         self._cleanup_interval_seconds = cleanup_interval_seconds
@@ -44,22 +46,58 @@ class InMemoryRateLimiter:
             bucket = self._buckets.get(key)
             if bucket is None:
                 if len(self._buckets) >= self._max_buckets:
-                    self._prune(now)
+                    if self._next_expiration() <= now:
+                        self._prune(now)
                 if len(self._buckets) >= self._max_buckets:
-                    return self._capacity_retry_after(now)
+                    return max(1, math.ceil(self._next_expiration() - now))
                 bucket = _Bucket(deque(), window_seconds)
                 self._buckets[key] = bucket
             cutoff = now - window_seconds
             while bucket.timestamps and bucket.timestamps[0] <= cutoff:
                 bucket.timestamps.popleft()
+            window_changed = bucket.window_seconds != window_seconds
             bucket.window_seconds = window_seconds
             if len(bucket.timestamps) >= limit:
+                if window_changed:
+                    self._record_expiration(key, bucket)
                 return max(
                     1,
                     math.ceil(window_seconds - (now - bucket.timestamps[0])),
                 )
             bucket.timestamps.append(now)
+            self._record_expiration(key, bucket)
             return None
+
+    def _record_expiration(
+        self, key: tuple[str, str], bucket: _Bucket
+    ) -> None:
+        heapq.heappush(
+            self._expirations,
+            (bucket.timestamps[-1] + bucket.window_seconds, key),
+        )
+        if len(self._expirations) > 2 * self._max_buckets:
+            self._rebuild_expirations()
+
+    def _next_expiration(self) -> float:
+        while self._expirations:
+            expiry, key = self._expirations[0]
+            bucket = self._buckets.get(key)
+            if (
+                bucket is not None
+                and bucket.timestamps
+                and expiry == bucket.timestamps[-1] + bucket.window_seconds
+            ):
+                return expiry
+            heapq.heappop(self._expirations)
+        return math.inf
+
+    def _rebuild_expirations(self) -> None:
+        self._expirations = [
+            (bucket.timestamps[-1] + bucket.window_seconds, key)
+            for key, bucket in self._buckets.items()
+            if bucket.timestamps
+        ]
+        heapq.heapify(self._expirations)
 
     def _prune(self, now: float) -> None:
         stale = [
@@ -70,16 +108,5 @@ class InMemoryRateLimiter:
         ]
         for key in stale:
             del self._buckets[key]
+        self._rebuild_expirations()
         self._last_cleanup = now
-
-    def _capacity_retry_after(self, now: float) -> int:
-        return max(
-            1,
-            math.ceil(
-                min(
-                    bucket.timestamps[0] + bucket.window_seconds - now
-                    for bucket in self._buckets.values()
-                    if bucket.timestamps
-                )
-            ),
-        )
