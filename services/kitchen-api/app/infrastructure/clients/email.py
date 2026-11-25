@@ -1,5 +1,5 @@
 from email.message import EmailMessage
-from urllib.parse import urlencode
+from urllib.parse import quote
 
 import aiosmtplib
 from aiosmtplib import SMTPException
@@ -38,7 +38,8 @@ class EmailClient:
     async def send_verification_email(
         self, recipient: str, token: str
     ) -> None:
-        link = f"{self.base_url}?{urlencode({'token': token})}"
+        base_url = self.base_url.partition("#")[0]
+        link = f"{base_url}#token={quote(token, safe='')}"
         message = EmailMessage()
         message["From"] = self.sender
         message["To"] = recipient

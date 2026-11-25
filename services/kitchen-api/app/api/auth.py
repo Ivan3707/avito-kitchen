@@ -18,7 +18,12 @@ from app.services.registration import RegistrationService
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
-_rate_limiter = InMemoryRateLimiter()
+_rate_limiter = InMemoryRateLimiter(
+    max_buckets=settings.AUTH_RATE_LIMIT_MAX_BUCKETS,
+    cleanup_interval_seconds=(
+        settings.AUTH_RATE_LIMIT_CLEANUP_INTERVAL_SECONDS
+    ),
+)
 _email_client = EmailClient(
     host=settings.SMTP_HOST,
     port=settings.SMTP_PORT,

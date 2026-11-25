@@ -1,9 +1,11 @@
 import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from typing import NoReturn
+from uuid import UUID
 
-from argon2.exceptions import InvalidHashError
-from sqlalchemy.exc import IntegrityError
+from argon2.exceptions import HashingError, InvalidHashError, VerificationError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from app.core.security.action_tokens import (
     generate_action_token,
@@ -18,7 +20,7 @@ from app.infrastructure.database.models.user_action_token import (
     UserActionToken,
 )
 from app.infrastructure.unit_of_work import UnitOfWork
-from app.services.errors import InvalidVerificationError
+from app.services.errors import AuthTechnicalError, InvalidVerificationError
 
 UowFactory = Callable[[], UnitOfWork]
 
@@ -40,16 +42,19 @@ class RegistrationService:
         password: str,
     ) -> None:
         email = normalize_email(email)
-        password_hash = await hash_password(password)
-        raw_token = generate_action_token()
-        now = datetime.now(timezone.utc)
-        created = False
+        try:
+            password_hash = await hash_password(password)
+        except HashingError as exc:
+            self._raise_argon_error("register", "hash", exc)
+        raw_token: str | None = None
 
         try:
             async with uow_factory() as uow:
                 await uow.users.lock_email(email)
                 if await uow.users.get_by_email(email) is not None:
                     return
+                now = datetime.now(timezone.utc)
+                raw_token = generate_action_token()
                 user = uow.users.add(
                     User(
                         email=email,
@@ -63,11 +68,14 @@ class RegistrationService:
                 uow.user_action_tokens.add(
                     self._new_email_token(user.id, raw_token, now)
                 )
-                created = True
-        except IntegrityError:
-            return
+        except IntegrityError as exc:
+            if self._is_email_unique_violation(exc):
+                return
+            self._raise_database_error("register", exc)
+        except SQLAlchemyError as exc:
+            self._raise_database_error("register", exc)
 
-        if created:
+        if raw_token is not None:
             await self._send_verification_email(email, raw_token)
 
     async def verify_email(
@@ -78,49 +86,52 @@ class RegistrationService:
     ) -> None:
         token_hash = hash_action_token(raw_token)
         now = datetime.now(timezone.utc)
-        async with uow_factory() as uow:
-            token = await uow.user_action_tokens.get_by_hash(token_hash)
-            if not self._token_is_usable(token, now):
-                raise self._invalid_verification()
-            user = await uow.users.get_by_id(token.user_id)
-            if not self._user_can_verify(user):
-                raise self._invalid_verification()
-            checked_password_hash = user.password_hash
-            user_id = user.id
+        try:
+            async with uow_factory() as uow:
+                token = await uow.user_action_tokens.get_by_hash(token_hash)
+                if not self._token_is_usable(token, now):
+                    raise self._invalid_verification()
+                user = await uow.users.get_by_id(token.user_id)
+                if not self._user_can_verify(user):
+                    raise self._invalid_verification()
+                checked_password_hash = user.password_hash
+                user_id = user.id
+        except SQLAlchemyError as exc:
+            self._raise_database_error("verify_email_initial_read", exc)
 
         try:
             password_matches = await verify_password(
                 password, checked_password_hash
             )
-        except InvalidHashError:
-            raise self._invalid_verification() from None
+        except (InvalidHashError, VerificationError) as exc:
+            self._raise_argon_error("verify_email", "verify", exc)
         if not password_matches:
             raise self._invalid_verification()
 
-        now = datetime.now(timezone.utc)
-        async with uow_factory() as uow:
-            user = await uow.users.get_by_id_for_update(user_id)
-            if (
-                not self._user_can_verify(user)
-                or user.password_hash != checked_password_hash
-            ):
-                raise self._invalid_verification()
-            token = await uow.user_action_tokens.get_by_hash_for_update(
-                token_hash
-            )
-            if (
-                not self._token_is_usable(token, now)
-                or token.user_id != user.id
-            ):
-                raise self._invalid_verification()
-            user.email_verified_at = now
-            token.used_at = now
-            await uow.user_action_tokens.revoke_active(
-                user.id,
-                TokenPurpose.EMAIL_VERIFICATION.value,
-                now,
-                exclude_id=token.id,
-            )
+        try:
+            async with uow_factory() as uow:
+                user = await uow.users.get_by_id_for_update(user_id)
+                token = await uow.user_action_tokens.get_by_hash_for_update(
+                    token_hash
+                )
+                now = datetime.now(timezone.utc)
+                if (
+                    not self._user_can_verify(user)
+                    or user.password_hash != checked_password_hash
+                    or not self._token_is_usable(token, now)
+                    or token.user_id != user.id
+                ):
+                    raise self._invalid_verification()
+                user.email_verified_at = now
+                token.used_at = now
+                await uow.user_action_tokens.revoke_active(
+                    user.id,
+                    TokenPurpose.EMAIL_VERIFICATION.value,
+                    now,
+                    exclude_id=token.id,
+                )
+        except SQLAlchemyError as exc:
+            self._raise_database_error("verify_email_finalize", exc)
 
     async def resend_verification(
         self,
@@ -129,30 +140,35 @@ class RegistrationService:
     ) -> None:
         email = normalize_email(email)
         raw_token: str | None = None
-        async with uow_factory() as uow:
-            candidate = await uow.users.get_by_email(email)
-            if candidate is None:
-                return
-            user = await uow.users.get_by_id_for_update(candidate.id)
-            if not self._user_can_verify(user):
-                return
-            now = datetime.now(timezone.utc)
-            purpose = TokenPurpose.EMAIL_VERIFICATION.value
-            latest = await uow.user_action_tokens.latest_created_at(
-                user.id, purpose
-            )
-            if latest is not None and now - latest < TOKEN_MINIMUM_INTERVAL:
-                return
-            issued = await uow.user_action_tokens.count_created_since(
-                user.id, purpose, now - timedelta(hours=1)
-            )
-            if issued >= TOKEN_HOURLY_LIMIT:
-                return
-            await uow.user_action_tokens.revoke_active(user.id, purpose, now)
-            raw_token = generate_action_token()
-            uow.user_action_tokens.add(
-                self._new_email_token(user.id, raw_token, now)
-            )
+        try:
+            async with uow_factory() as uow:
+                user = await uow.users.get_by_email_for_update(email)
+                if not self._user_can_verify(user):
+                    return
+                now = datetime.now(timezone.utc)
+                purpose = TokenPurpose.EMAIL_VERIFICATION.value
+                latest = await uow.user_action_tokens.latest_created_at(
+                    user.id, purpose
+                )
+                if (
+                    latest is not None
+                    and now - latest < TOKEN_MINIMUM_INTERVAL
+                ):
+                    return
+                issued = await uow.user_action_tokens.count_created_since(
+                    user.id, purpose, now - timedelta(hours=1)
+                )
+                if issued >= TOKEN_HOURLY_LIMIT:
+                    return
+                await uow.user_action_tokens.revoke_active(
+                    user.id, purpose, now
+                )
+                raw_token = generate_action_token()
+                uow.user_action_tokens.add(
+                    self._new_email_token(user.id, raw_token, now)
+                )
+        except SQLAlchemyError as exc:
+            self._raise_database_error("resend_verification", exc)
 
         if raw_token is not None:
             await self._send_verification_email(email, raw_token)
@@ -167,7 +183,7 @@ class RegistrationService:
 
     @staticmethod
     def _new_email_token(
-        user_id,
+        user_id: UUID,
         raw_token: str,
         now: datetime,
     ) -> UserActionToken:
@@ -200,3 +216,49 @@ class RegistrationService:
     @staticmethod
     def _invalid_verification() -> InvalidVerificationError:
         return InvalidVerificationError("Invalid verification credentials")
+
+    @staticmethod
+    def _postgres_error_details(
+        exc: SQLAlchemyError,
+    ) -> tuple[str | None, str | None, str]:
+        original = getattr(exc, "orig", None)
+        driver_error = getattr(original, "__cause__", None)
+        sqlstate = getattr(driver_error, "sqlstate", None) or getattr(
+            original, "sqlstate", None
+        )
+        constraint = getattr(driver_error, "constraint_name", None)
+        error_type = type(driver_error or original or exc).__name__
+        return sqlstate, constraint, error_type
+
+    @classmethod
+    def _is_email_unique_violation(cls, exc: IntegrityError) -> bool:
+        sqlstate, constraint, _ = cls._postgres_error_details(exc)
+        return sqlstate == "23505" and constraint == "users_email_key"
+
+    @classmethod
+    def _raise_database_error(
+        cls, operation: str, exc: SQLAlchemyError
+    ) -> NoReturn:
+        sqlstate, constraint, error_type = cls._postgres_error_details(exc)
+        logger.error(
+            "Auth technical failure component=database operation=%s "
+            "error_type=%s error_code=%s constraint=%s",
+            operation,
+            error_type,
+            sqlstate or "unknown",
+            constraint or "unknown",
+        )
+        raise AuthTechnicalError("Authentication operation failed") from None
+
+    @staticmethod
+    def _raise_argon_error(
+        operation: str, component_operation: str, exc: Exception
+    ) -> NoReturn:
+        logger.error(
+            "Auth technical failure component=argon2 operation=%s.%s "
+            "error_type=%s error_code=argon2_failure",
+            operation,
+            component_operation,
+            type(exc).__name__,
+        )
+        raise AuthTechnicalError("Authentication operation failed") from None

@@ -51,6 +51,7 @@ async def run_async_migrations() -> None:
     connectable: AsyncEngine = create_async_engine(
         settings.database_url,
         poolclass=pool.NullPool,
+        hide_parameters=True,
     )
 
     try:

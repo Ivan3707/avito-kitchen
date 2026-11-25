@@ -14,6 +14,10 @@ class InvalidVerificationError(ServiceError):
     pass
 
 
+class AuthTechnicalError(ServiceError):
+    pass
+
+
 class RateLimitExceeded(ServiceError):
     def __init__(self, retry_after: int) -> None:
         super().__init__("Too many requests")
