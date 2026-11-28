@@ -11,7 +11,7 @@ from app.modules.catalog.models.restaurant import Restaurant
 from app.modules.catalog.sync.schemas import SyncPayload
 from app.modules.catalog.sync.service import SyncService
 from app.modules.orders.models.order import Order
-from app.modules.orders.models.order_item import OrderItem
+from app.modules.orders.models.order_item import OrderItem, OrderItemSnapshot
 from app.modules.users.models.user import User
 
 pytestmark = pytest.mark.integration
@@ -352,27 +352,24 @@ async def test_full_snapshot_preserves_historical_order_references(
         )
     )
     await uow.flush()
-    order = uow.orders.orders.add(
-        Order(
-            user_id=user.id,
-            restaurant_id=restaurant.id,
-            branch_id=branch.id,
-            external_order_id=str(uuid4()),
-            restaurant_order_id="restaurant-order-1",
-            request_hash="hash",
-            status="confirmed",
-        )
+    historical_name = item.name
+    order = Order.create_pending(
+        user_id=user.id,
+        restaurant_id=restaurant.id,
+        branch_id=branch.id,
+        external_order_id=str(uuid4()),
+        request_hash="hash",
+        items=[
+            OrderItemSnapshot(
+                menu_item_id=item.id,
+                product_name=historical_name,
+                unit_price=100,
+                quantity=1,
+            )
+        ],
     )
-    await uow.flush()
-    uow.orders.order_items.add(
-        OrderItem(
-            order_id=order.id,
-            menu_item_id=item.id,
-            product_name=item.name,
-            unit_price=100,
-            quantity=1,
-        )
-    )
+    order.confirm("restaurant-order-1")
+    uow.orders.orders.add(order)
     await uow.flush()
     await service.sync(
         uow,
@@ -386,7 +383,45 @@ async def test_full_snapshot_preserves_historical_order_references(
     stored_items = await uow.session.scalars(
         select(OrderItem).where(OrderItem.order_id == order.id)
     )
-    assert stored_items.one().menu_item_id == item.id
+    stored_item = stored_items.one()
+    assert stored_item.menu_item_id == item.id
+    assert (
+        stored_item.product_name,
+        stored_item.unit_price,
+        stored_item.quantity,
+    ) == (
+        historical_name,
+        100,
+        1,
+    )
+
+    await service.sync(
+        uow,
+        make_payload(
+            restaurant_external_id=external_id,
+            revision=3,
+            item_name="Renamed in catalog",
+            price=125,
+        ),
+    )
+    current_item = await uow.catalog.menu_items.get_by_id(item.id)
+    current_price = (
+        await uow.catalog.branch_menu_items.get_by_branch_and_menu_item(
+            branch.id, item.id
+        )
+    )
+    assert current_item.name == "Renamed in catalog"
+    assert current_price.price == 125
+    stored_item = (
+        await uow.session.scalars(
+            select(OrderItem).where(OrderItem.order_id == order.id)
+        )
+    ).one()
+    assert (
+        stored_item.product_name,
+        stored_item.unit_price,
+        stored_item.quantity,
+    ) == (historical_name, 100, 1)
 
 
 @pytest.mark.asyncio

@@ -26,6 +26,7 @@ pytestmark = pytest.mark.integration
 class FakeRestaurantClient:
     def __init__(self, response=None):
         self.calls = 0
+        self.payloads = []
         self.response = response or RestaurantOrderResponse(
             accepted=True,
             restaurant_order_id="restaurant-order-1",
@@ -33,6 +34,7 @@ class FakeRestaurantClient:
 
     async def create_order(self, payload):
         self.calls += 1
+        self.payloads.append(payload)
         return self.response
 
 
@@ -121,21 +123,97 @@ def request(restaurant_id, branch_id, *, order_id="order-1", price=100):
     )
 
 
+async def stored_order(
+    session_factory, restaurant_external_id, order_id="order-1"
+):
+    async with UnitOfWork(session_factory) as uow:
+        restaurant = await uow.catalog.restaurants.get_by_external_id(
+            restaurant_external_id
+        )
+        order = await uow.orders.orders.get_by_external_id_for_update(
+            restaurant.id, order_id
+        )
+        if order is None:
+            return None
+        return {
+            "id": order.id,
+            "status": order.status,
+            "restaurant_order_id": order.restaurant_order_id,
+            "rejection": (
+                order.rejection_code,
+                order.rejection_message,
+                order.rejection_menu_item_external_id,
+                order.rejection_old_price,
+                order.rejection_current_price,
+            ),
+            "items": [
+                (
+                    item.menu_item_id,
+                    item.product_name,
+                    item.unit_price,
+                    item.quantity,
+                )
+                for item in order.items
+            ],
+        }
+
+
 @pytest.mark.asyncio
 async def test_create_order_and_retry_are_idempotent(test_session_factory):
     restaurant_id, branch_id = await create_catalog(test_session_factory)
-    client = FakeRestaurantClient()
+    active_transactions = 0
+
+    class TrackingUow(UnitOfWork):
+        async def __aenter__(self):
+            nonlocal active_transactions
+            result = await super().__aenter__()
+            active_transactions += 1
+            return result
+
+        async def __aexit__(self, *args):
+            nonlocal active_transactions
+            try:
+                return await super().__aexit__(*args)
+            finally:
+                active_transactions -= 1
+
+    class TrackingClient(FakeRestaurantClient):
+        async def create_order(self, payload):
+            assert active_transactions == 0
+            return await super().create_order(payload)
+
+    client = TrackingClient()
 
     def uow_factory() -> UnitOfWork:
-        return UnitOfWork(test_session_factory)
+        return TrackingUow(test_session_factory)
 
     service = OrderService(uow_factory, client)
     order_request = request(restaurant_id, branch_id)
     first = await service.create_order(order_request, "customer@example.com")
+    after_first = await stored_order(test_session_factory, restaurant_id)
     second = await service.create_order(order_request, "customer@example.com")
+    after_second = await stored_order(test_session_factory, restaurant_id)
     assert first.accepted is True
+    assert (
+        first.order_id
+        == second.order_id
+        == after_first["id"]
+        == after_second["id"]
+    )
     assert second.restaurant_order_id == first.restaurant_order_id
     assert client.calls == 1
+    assert client.payloads == [
+        {
+            "order_id": "order-1",
+            "branch_external_id": branch_id,
+            "items": [
+                item.model_dump(mode="json") for item in order_request.items
+            ],
+        }
+    ]
+    assert after_second["items"] == after_first["items"]
+    assert len(after_second["items"]) == 1
+    assert after_second["items"][0][1:] == ("Item", 100, 1)
 
 
 @pytest.mark.asyncio
@@ -190,6 +268,13 @@ async def test_restaurant_rejection_is_stored(test_session_factory):
     assert first.order_id is not None
     assert retry == first
     assert client.calls == 1
+    stored = await stored_order(test_session_factory, restaurant_id)
+    assert stored["id"] == first.order_id
+    assert stored["status"] == "rejected"
+    assert stored["rejection"][:2] == (
+        BusinessErrorCode.RESTAURANT_REJECTED.value,
+        "Rejected",
+    )
 
 
 @pytest.mark.asyncio
@@ -205,6 +290,7 @@ async def test_timeout_leaves_recoverable_pending_order(test_session_factory):
         request(restaurant_id, branch_id),
         "customer@example.com",
     )
+    pending = await stored_order(test_session_factory, restaurant_id)
     recovered = await OrderService(
         factory, FakeRestaurantClient()
     ).create_order(
@@ -212,7 +298,15 @@ async def test_timeout_leaves_recoverable_pending_order(test_session_factory):
         "customer@example.com",
     )
     assert timed_out.reason.code == BusinessErrorCode.RESTAURANT_TIMEOUT
+    assert pending["status"] == "pending"
+    assert pending["restaurant_order_id"] is None
+    assert pending["rejection"] == (None, None, None, None, None)
+    assert len(pending["items"]) == 1
     assert recovered.accepted is True
+    confirmed = await stored_order(test_session_factory, restaurant_id)
+    assert recovered.order_id == pending["id"] == confirmed["id"]
+    assert confirmed["status"] == "confirmed"
+    assert confirmed["items"] == pending["items"]
 
 
 @pytest.mark.asyncio
@@ -241,6 +335,10 @@ async def test_failed_local_finalize_commit_is_recoverable(
             "customer@example.com",
         )
 
+    pending = await stored_order(test_session_factory, restaurant_id)
+    assert pending["status"] == "pending"
+    assert len(pending["items"]) == 1
+
     recovered = await OrderService(
         lambda: UnitOfWork(test_session_factory), client
     ).create_order(
@@ -248,6 +346,7 @@ async def test_failed_local_finalize_commit_is_recoverable(
         "customer@example.com",
     )
     assert recovered.accepted is True
+    assert recovered.order_id == pending["id"]
 
 
 @pytest.mark.asyncio
@@ -263,6 +362,7 @@ async def test_catalog_rejection_avoids_restaurant_call(test_session_factory):
     assert result.accepted is False
     assert result.reason.code == BusinessErrorCode.PRICE_CHANGED
     assert client.calls == 0
+    assert await stored_order(test_session_factory, restaurant_id) is None
 
 
 @pytest.mark.asyncio
@@ -284,3 +384,4 @@ async def test_item_without_branch_price_is_unavailable(
     assert result.accepted is False
     assert result.reason.code == BusinessErrorCode.PRODUCT_UNAVAILABLE
     assert client.calls == 0
+    assert await stored_order(test_session_factory, restaurant_id) is None

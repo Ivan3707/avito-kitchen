@@ -1,0 +1,2 @@
+class InvalidOrderTransitionError(Exception):
+    pass

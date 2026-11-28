@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from sqlalchemy import select, text
+from sqlalchemy.orm import selectinload
 
 from app.infrastructure.repositories.base import BaseRepository
 from app.modules.orders.models.order import Order
@@ -8,6 +9,14 @@ from app.modules.orders.models.order import Order
 
 class OrderRepository(BaseRepository[Order]):
     model = Order
+
+    async def get_with_items(self, order_id: UUID) -> Order | None:
+        result = await self.session.execute(
+            select(self.model)
+            .options(selectinload(Order.items))
+            .where(self.model.id == order_id)
+        )
+        return result.scalar_one_or_none()
 
     async def lock_external_id(
         self,
@@ -39,6 +48,7 @@ class OrderRepository(BaseRepository[Order]):
     ) -> Order | None:
         result = await self.session.execute(
             select(self.model)
+            .options(selectinload(Order.items))
             .where(
                 self.model.restaurant_id == restaurant_id,
                 self.model.external_order_id == external_order_id,

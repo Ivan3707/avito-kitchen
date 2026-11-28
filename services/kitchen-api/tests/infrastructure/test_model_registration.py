@@ -41,7 +41,6 @@ async def test_all_repository_groups_share_one_session() -> None:
             uow.catalog.sync_snapshots,
             uow.cart.carts,
             uow.orders.orders,
-            uow.orders.order_items,
             uow.users.users,
             uow.auth.user_action_tokens,
         ]

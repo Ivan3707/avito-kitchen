@@ -10,7 +10,7 @@ from app.infrastructure.clients.restaurant import (
 )
 from app.infrastructure.unit_of_work import UnitOfWork, UowFactory
 from app.modules.orders.models.order import Order
-from app.modules.orders.models.order_item import OrderItem
+from app.modules.orders.models.order_item import OrderItemSnapshot
 from app.modules.orders.schemas import (
     BusinessErrorCode,
     CreateOrderRequest,
@@ -174,34 +174,33 @@ class OrderService:
                 branch = await uow.catalog.restaurant_branches.get_by_restaurant_and_external_id(
                     restaurant.id, request.branch_external_id
                 )
-                order = uow.orders.orders.add(
-                    Order(
-                        user_id=user.id,
-                        restaurant_id=restaurant.id,
-                        branch_id=branch.id,
-                        external_order_id=request.order_id,
-                        restaurant_order_id=None,
-                        request_hash=request_hash,
-                        status="pending",
-                    )
-                )
-                await uow.flush()
                 menu = await uow.catalog.menus.get_by_restaurant_id(
                     restaurant.id
                 )
+                snapshots = []
                 for requested_item in request.items:
                     menu_item = await uow.catalog.menu_items.get_by_menu_and_external_id(
                         menu.id, requested_item.menu_item_external_id
                     )
-                    uow.orders.order_items.add(
-                        OrderItem(
-                            order_id=order.id,
+                    snapshots.append(
+                        OrderItemSnapshot(
                             menu_item_id=menu_item.id,
                             product_name=menu_item.name,
                             unit_price=requested_item.unit_price,
                             quantity=requested_item.quantity,
                         )
                     )
+                order = uow.orders.orders.add(
+                    Order.create_pending(
+                        user_id=user.id,
+                        restaurant_id=restaurant.id,
+                        branch_id=branch.id,
+                        external_order_id=request.order_id,
+                        request_hash=request_hash,
+                        items=snapshots,
+                    )
+                )
+                await uow.flush()
                 local_order_id = order.id
 
         try:
@@ -234,20 +233,16 @@ class OrderService:
             if order.status != "pending":
                 return self.stored_response(order)
             if restaurant_response.accepted:
-                order.status = "confirmed"
-                order.restaurant_order_id = (
-                    restaurant_response.restaurant_order_id
-                )
+                order.confirm(restaurant_response.restaurant_order_id)
             else:
                 issue = restaurant_response.reason
-                order.status = "rejected"
-                order.rejection_code = issue.code.value
-                order.rejection_message = issue.message
-                order.rejection_menu_item_external_id = (
-                    issue.menu_item_external_id
+                order.reject(
+                    code=issue.code.value,
+                    message=issue.message,
+                    menu_item_external_id=issue.menu_item_external_id,
+                    old_price=issue.old_price,
+                    current_price=issue.current_price,
                 )
-                order.rejection_old_price = issue.old_price
-                order.rejection_current_price = issue.current_price
             result = self.stored_response(order)
             result.order_id = local_order_id
             return result
