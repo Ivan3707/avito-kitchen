@@ -97,7 +97,7 @@ Kitchen вычисляет SHA-256 канонического бизнес-со�
 
 ## API
 
-Актуальные маршруты и DTO доступны в автоматически генерируемом Swagger UI каждого запущенного сервиса. Статическая [OpenAPI-спецификация](openapi/openapi.yaml) может отставать от исходного кода.
+Актуальные маршруты и DTO доступны в автоматически генерируемом Swagger UI каждого запущенного сервиса. Статическая [OpenAPI-спецификация](contracts/openapi/kitchen-api.yaml) может отставать от исходного кода.
 
 ### Kitchen API — клиентские маршруты
 
@@ -207,8 +207,8 @@ avito-kitchen/
 │   ├── architecture/
 │   ├── cjm/
 │   └── database/
-├── openapi/
-│   └── openapi.yaml
+├── contracts/
+│   └── openapi/
 ├── AGENTS.md
 ├── docker-compose.yml
 └── README.md
@@ -327,7 +327,7 @@ uv run ruff format --check .
 | [Customer Journey](docs/cjm/user-cjm.puml) | Пользовательский сценарий |
 | [Restaurant Journey](docs/cjm/restaurant-cjm.puml) | Сценарий ресторана |
 | [ER Diagram](docs/database/er-diagram.puml) | Модель данных |
-| [OpenAPI](openapi/openapi.yaml) | Статическое описание HTTP API |
+| [OpenAPI](contracts/openapi/kitchen-api.yaml) | Статическое описание HTTP API |
 
 Исходный код, миграции и автоматически генерируемый OpenAPI отражают текущую реализацию. Диаграммы и статическая спецификация могут требовать актуализации после изменений.
 
