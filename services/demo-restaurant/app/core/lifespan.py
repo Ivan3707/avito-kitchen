@@ -10,7 +10,8 @@ from app.infrastructure.database.session import (
     async_session_maker,
     engine,
 )
-from app.service.service import DemoRestaurantService
+from app.modules.catalog.sync.service import CatalogSyncService
+from app.modules.orders.service import OrderService
 
 
 @asynccontextmanager
@@ -21,9 +22,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             base_url=settings.kitchen_api_url,
         )
 
-        app.state.service = DemoRestaurantService(
+        app.state.catalog_sync_service = CatalogSyncService(
             session_factory=async_session_maker,
             kitchen_client=kitchen_client,
+        )
+
+        app.state.order_service = OrderService(
+            session_factory=async_session_maker,
         )
 
         try:

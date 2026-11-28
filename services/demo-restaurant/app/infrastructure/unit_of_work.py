@@ -1,21 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.infrastructure.repositories.branch_menu_item import (
-    BranchMenuItemRepository,
-)
-from app.infrastructure.repositories.catalog_state import (
-    CatalogStateRepository,
-)
-from app.infrastructure.repositories.menu_item import MenuItemRepository
-from app.infrastructure.repositories.restaurant_branch import (
-    RestaurantBranchRepository,
-)
-from app.infrastructure.repositories.restaurant_order import (
-    RestaurantOrderRepository,
-)
-from app.infrastructure.repositories.restaurant_order_item import (
-    RestaurantOrderItemRepository,
-)
+from app.modules.catalog.repositories.group import CatalogRepositories
+from app.modules.orders.repositories.group import OrderRepositories
 
 
 class UnitOfWork:
@@ -50,14 +36,8 @@ class UnitOfWork:
                     }
                 )
 
-            self.restaurant_branches = RestaurantBranchRepository(self.session)
-            self.menu_items = MenuItemRepository(self.session)
-            self.branch_menu_items = BranchMenuItemRepository(self.session)
-            self.catalog_state = CatalogStateRepository(self.session)
-            self.restaurant_orders = RestaurantOrderRepository(self.session)
-            self.restaurant_order_items = RestaurantOrderItemRepository(
-                self.session
-            )
+            self.catalog = CatalogRepositories(self.session)
+            self.orders = OrderRepositories(self.session)
 
             return self
 
