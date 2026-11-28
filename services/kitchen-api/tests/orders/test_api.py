@@ -9,6 +9,7 @@ from app.core.dependencies import get_order_service
 from app.infrastructure.unit_of_work import UnitOfWork
 from app.modules.catalog.sync.schemas import SyncPayload
 from app.modules.catalog.sync.service import SyncService
+from app.modules.orders.ports import RestaurantOrderCommand
 from app.modules.orders.router import router
 from app.modules.orders.schemas import RestaurantOrderResponse
 from app.modules.orders.service import OrderService
@@ -79,7 +80,7 @@ async def test_create_order_contract(test_session_factory):
         )
 
     class FakeRestaurantClient:
-        async def create_order(self, request_payload):
+        async def create_order(self, order: RestaurantOrderCommand):
             return RestaurantOrderResponse(
                 accepted=True, restaurant_order_id="restaurant-order-1"
             )

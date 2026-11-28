@@ -12,16 +12,17 @@ from app.core.security.action_tokens import (
 )
 from app.core.security.email import normalize_email
 from app.core.security.passwords import hash_password, verify_password
-from app.infrastructure.clients.email import EmailClient, EmailDeliveryError
 from app.infrastructure.unit_of_work import UowFactory
 from app.modules.auth.errors import (
     AuthTechnicalError,
+    EmailDeliveryError,
     InvalidVerificationError,
 )
 from app.modules.auth.models.user_action_token import (
     TokenPurpose,
     UserActionToken,
 )
+from app.modules.auth.ports import VerificationEmailGateway
 from app.modules.users.models.user import User
 from app.modules.users.service import UserService
 
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 class RegistrationService:
     def __init__(
         self,
-        email_client: EmailClient,
+        email_client: VerificationEmailGateway,
         uow_factory: UowFactory,
         user_service: UserService,
     ) -> None:

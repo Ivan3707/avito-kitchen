@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from app.modules.auth import registration
+from app.modules.auth.errors import EmailDeliveryError
 from app.modules.auth.registration import RegistrationService
 from app.modules.users.service import UserService
 
@@ -72,11 +73,17 @@ class FakeUow:
 
 
 class FakeEmailClient:
-    def __init__(self):
+    def __init__(self, uow=None, fail=False):
         self.sent = []
+        self.uow = uow
+        self.fail = fail
 
     async def send_verification_email(self, email, token):
+        if self.uow is not None:
+            assert not self.uow.active
         self.sent.append((email, token))
+        if self.fail:
+            raise EmailDeliveryError("delivery failed")
 
 
 @pytest.mark.asyncio
@@ -92,7 +99,7 @@ async def test_registration_creates_user_through_user_service_in_shared_uow(
     )
     users, tokens = FakeUsers(), FakeTokens()
     uow = FakeUow(users, tokens)
-    email_client = FakeEmailClient()
+    email_client = FakeEmailClient(uow)
     user_service = Mock(wraps=UserService())
     real_create = UserService().create_pending_user
 
@@ -110,6 +117,27 @@ async def test_registration_creates_user_through_user_service_in_shared_uow(
     assert users.user.password_hash == "password-hash"
     assert tokens.token.user_id == users.user.id
     assert uow.flush_count == 1
+    assert email_client.sent == [("user@example.com", "raw-token")]
+
+
+@pytest.mark.asyncio
+async def test_delivery_error_after_commit_keeps_registration(monkeypatch):
+    async def fake_hash(password):
+        return "password-hash"
+
+    monkeypatch.setattr(registration, "hash_password", fake_hash)
+    monkeypatch.setattr(
+        registration, "generate_action_token", lambda: "raw-token"
+    )
+    users, tokens = FakeUsers(), FakeTokens()
+    uow = FakeUow(users, tokens)
+    email_client = FakeEmailClient(uow, fail=True)
+    service = RegistrationService(email_client, lambda: uow, UserService())
+
+    await service.register("user@example.com", "password")
+
+    assert users.user.email == "user@example.com"
+    assert tokens.token.user_id == users.user.id
     assert email_client.sent == [("user@example.com", "raw-token")]
 
 

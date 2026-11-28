@@ -4,9 +4,7 @@ from urllib.parse import quote
 import aiosmtplib
 from aiosmtplib import SMTPException
 
-
-class EmailDeliveryError(Exception):
-    pass
+from app.modules.auth.errors import EmailDeliveryError
 
 
 class EmailClient:

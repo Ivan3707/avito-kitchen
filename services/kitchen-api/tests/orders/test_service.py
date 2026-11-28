@@ -2,7 +2,6 @@ from uuid import uuid4
 
 import pytest
 
-from app.infrastructure.clients.restaurant import RestaurantTimeoutError
 from app.infrastructure.unit_of_work import UnitOfWork
 from app.modules.catalog.models.branch_menu_item import BranchMenuItem
 from app.modules.catalog.models.menu import Menu
@@ -10,6 +9,11 @@ from app.modules.catalog.models.menu_item import MenuItem
 from app.modules.catalog.models.restaurant import Restaurant
 from app.modules.catalog.models.restaurant_branch import (
     RestaurantBranch,
+)
+from app.modules.orders.errors import RestaurantTimeoutError
+from app.modules.orders.ports import (
+    RestaurantOrderCommand,
+    RestaurantOrderItemCommand,
 )
 from app.modules.orders.schemas import (
     BusinessErrorCode,
@@ -26,20 +30,20 @@ pytestmark = pytest.mark.integration
 class FakeRestaurantClient:
     def __init__(self, response=None):
         self.calls = 0
-        self.payloads = []
+        self.commands = []
         self.response = response or RestaurantOrderResponse(
             accepted=True,
             restaurant_order_id="restaurant-order-1",
         )
 
-    async def create_order(self, payload):
+    async def create_order(self, order: RestaurantOrderCommand):
         self.calls += 1
-        self.payloads.append(payload)
+        self.commands.append(order)
         return self.response
 
 
 class TimeoutRestaurantClient:
-    async def create_order(self, payload):
+    async def create_order(self, order: RestaurantOrderCommand):
         raise RestaurantTimeoutError
 
 
@@ -178,9 +182,9 @@ async def test_create_order_and_retry_are_idempotent(test_session_factory):
                 active_transactions -= 1
 
     class TrackingClient(FakeRestaurantClient):
-        async def create_order(self, payload):
+        async def create_order(self, order: RestaurantOrderCommand):
             assert active_transactions == 0
-            return await super().create_order(payload)
+            return await super().create_order(order)
 
     client = TrackingClient()
 
@@ -202,14 +206,18 @@ async def test_create_order_and_retry_are_idempotent(test_session_factory):
     )
     assert second.restaurant_order_id == first.restaurant_order_id
     assert client.calls == 1
-    assert client.payloads == [
-        {
-            "order_id": "order-1",
-            "branch_external_id": branch_id,
-            "items": [
-                item.model_dump(mode="json") for item in order_request.items
-            ],
-        }
+    assert client.commands == [
+        RestaurantOrderCommand(
+            order_id="order-1",
+            branch_external_id=branch_id,
+            items=(
+                RestaurantOrderItemCommand(
+                    menu_item_external_id="item-1",
+                    quantity=1,
+                    unit_price=100,
+                ),
+            ),
+        )
     ]
     assert after_second["items"] == after_first["items"]
     assert len(after_second["items"]) == 1

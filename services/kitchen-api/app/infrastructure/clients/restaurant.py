@@ -1,17 +1,12 @@
-from typing import Any
-
 import httpx
 from pydantic import ValidationError
 
+from app.modules.orders.errors import (
+    RestaurantCommunicationError,
+    RestaurantTimeoutError,
+)
+from app.modules.orders.ports import RestaurantOrderCommand
 from app.modules.orders.schemas import RestaurantOrderResponse
-
-
-class RestaurantTimeoutError(Exception):
-    pass
-
-
-class RestaurantCommunicationError(Exception):
-    pass
 
 
 class RestaurantClient:
@@ -21,8 +16,20 @@ class RestaurantClient:
 
     async def create_order(
         self,
-        payload: dict[str, Any],
+        order: RestaurantOrderCommand,
     ) -> RestaurantOrderResponse:
+        payload = {
+            "order_id": order.order_id,
+            "branch_external_id": order.branch_external_id,
+            "items": [
+                {
+                    "menu_item_external_id": item.menu_item_external_id,
+                    "quantity": item.quantity,
+                    "unit_price": item.unit_price,
+                }
+                for item in order.items
+            ],
+        }
         try:
             response = await self.client.post(
                 f"{self.base_url}/orders",

@@ -7,3 +7,7 @@ class InvalidVerificationError(ServiceError):
 
 class AuthTechnicalError(ServiceError):
     pass
+
+
+class EmailDeliveryError(Exception):
+    pass

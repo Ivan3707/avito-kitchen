@@ -3,14 +3,18 @@ from hashlib import sha256
 from uuid import UUID
 
 from app.core.errors import ResourceNotFoundError
-from app.infrastructure.clients.restaurant import (
-    RestaurantClient,
+from app.infrastructure.unit_of_work import UnitOfWork, UowFactory
+from app.modules.orders.errors import (
     RestaurantCommunicationError,
     RestaurantTimeoutError,
 )
-from app.infrastructure.unit_of_work import UnitOfWork, UowFactory
 from app.modules.orders.models.order import Order
 from app.modules.orders.models.order_item import OrderItemSnapshot
+from app.modules.orders.ports import (
+    RestaurantOrderCommand,
+    RestaurantOrderGateway,
+    RestaurantOrderItemCommand,
+)
 from app.modules.orders.schemas import (
     BusinessErrorCode,
     CreateOrderRequest,
@@ -23,7 +27,9 @@ from app.modules.orders.schemas import (
 
 class OrderService:
     def __init__(
-        self, uow_factory: UowFactory, restaurant_client: RestaurantClient
+        self,
+        uow_factory: UowFactory,
+        restaurant_client: RestaurantOrderGateway,
     ) -> None:
         self.uow_factory = uow_factory
         self.restaurant_client = restaurant_client
@@ -205,13 +211,18 @@ class OrderService:
 
         try:
             restaurant_response = await self.restaurant_client.create_order(
-                {
-                    "order_id": request.order_id,
-                    "branch_external_id": request.branch_external_id,
-                    "items": [
-                        item.model_dump(mode="json") for item in request.items
-                    ],
-                }
+                RestaurantOrderCommand(
+                    order_id=request.order_id,
+                    branch_external_id=request.branch_external_id,
+                    items=tuple(
+                        RestaurantOrderItemCommand(
+                            menu_item_external_id=item.menu_item_external_id,
+                            quantity=item.quantity,
+                            unit_price=item.unit_price,
+                        )
+                        for item in request.items
+                    ),
+                )
             )
         except (RestaurantTimeoutError, RestaurantCommunicationError):
             return self._rejected(
