@@ -8,6 +8,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.api.integration import get_uow, get_uow_factory, router
 from app.infrastructure.clients.restaurant import RestaurantClient
+from app.infrastructure.database.models.user import User
 from app.infrastructure.unit_of_work import UnitOfWork
 from app.integration.schemas.orders import RestaurantOrderResponse
 from app.main import handle_conflict
@@ -121,9 +122,22 @@ async def test_sync_endpoint_reports_integrity_conflict(client):
 
 
 @pytest.mark.asyncio
-async def test_create_order_contract(client, monkeypatch):
+async def test_create_order_contract(
+    client,
+    monkeypatch,
+    test_session_factory,
+):
     payload = sync_payload()
     await client.post("/integration/v1/sync", json=payload)
+    async with UnitOfWork(test_session_factory) as uow:
+        user = await uow.users.get_by_email("customer@example.com")
+        if user is None:
+            uow.users.add(
+                User(
+                    email="customer@example.com",
+                    password_hash="test-password-hash",
+                )
+            )
 
     async def fake_create_order(self, request_payload):
         return RestaurantOrderResponse(

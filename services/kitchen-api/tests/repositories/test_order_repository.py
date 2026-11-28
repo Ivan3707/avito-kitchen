@@ -2,20 +2,21 @@ from uuid import uuid4
 
 import pytest
 
-from app.infrastructure.database.models.customer import Customer
 from app.infrastructure.database.models.order import Order
 from app.infrastructure.database.models.restaurant import Restaurant
 from app.infrastructure.database.models.restaurant_branch import (
     RestaurantBranch,
 )
+from app.infrastructure.database.models.user import User
 from app.infrastructure.unit_of_work import UnitOfWork
 
 
 async def create_order_dependencies(uow: UnitOfWork):
-    customer = Customer(
-        email=f"customer-{uuid4()}@example.com",
+    user = User(
+        email=f"user-{uuid4()}@example.com",
+        password_hash="test-password-hash",
     )
-    uow.customers.add(customer)
+    uow.users.add(user)
 
     restaurant = Restaurant(
         external_id=f"restaurant-{uuid4()}",
@@ -35,15 +36,15 @@ async def create_order_dependencies(uow: UnitOfWork):
 
     await uow.session.flush()
 
-    return customer, restaurant, branch
+    return user, restaurant, branch
 
 
 @pytest.mark.asyncio
 async def test_add_and_get_by_id(uow: UnitOfWork):
-    customer, restaurant, branch = await create_order_dependencies(uow)
+    user, restaurant, branch = await create_order_dependencies(uow)
 
     order = Order(
-        customer_id=customer.id,
+        user_id=user.id,
         restaurant_id=restaurant.id,
         branch_id=branch.id,
         external_order_id=f"external-{uuid4()}",
@@ -60,7 +61,7 @@ async def test_add_and_get_by_id(uow: UnitOfWork):
 
     assert saved_order is not None
     assert saved_order.id == order.id
-    assert saved_order.customer_id == customer.id
+    assert saved_order.user_id == user.id
     assert saved_order.restaurant_id == restaurant.id
     assert saved_order.branch_id == branch.id
     assert saved_order.external_order_id == order.external_order_id
@@ -70,12 +71,12 @@ async def test_add_and_get_by_id(uow: UnitOfWork):
 
 @pytest.mark.asyncio
 async def test_get_by_external_id(uow: UnitOfWork):
-    customer, restaurant, branch = await create_order_dependencies(uow)
+    user, restaurant, branch = await create_order_dependencies(uow)
 
     external_order_id = f"external-{uuid4()}"
 
     order = Order(
-        customer_id=customer.id,
+        user_id=user.id,
         restaurant_id=restaurant.id,
         branch_id=branch.id,
         external_order_id=external_order_id,
@@ -117,12 +118,12 @@ async def test_get_by_external_id_returns_none(
 async def test_get_by_restaurant_order_id(
     uow: UnitOfWork,
 ):
-    customer, restaurant, branch = await create_order_dependencies(uow)
+    user, restaurant, branch = await create_order_dependencies(uow)
 
     restaurant_order_id = f"restaurant-order-{uuid4()}"
 
     order = Order(
-        customer_id=customer.id,
+        user_id=user.id,
         restaurant_id=restaurant.id,
         branch_id=branch.id,
         external_order_id=f"external-{uuid4()}",

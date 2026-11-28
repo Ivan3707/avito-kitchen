@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import selectinload
 
 from app.infrastructure.database.models.cart import Cart
@@ -10,6 +10,16 @@ from app.infrastructure.repositories.base import BaseRepository
 
 class CartRepository(BaseRepository[Cart]):
     model = Cart
+
+    async def lock_user_branch(
+        self,
+        user_id: UUID,
+        branch_id: UUID,
+    ) -> None:
+        await self.session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 2))"),
+            {"key": f"cart:{user_id}:{branch_id}"},
+        )
 
     async def get_with_items(
         self,
@@ -22,31 +32,31 @@ class CartRepository(BaseRepository[Cart]):
         )
         return result.scalar_one_or_none()
 
-    async def get_by_customer_and_branch(
+    async def get_by_user_and_branch(
         self,
-        customer_id: UUID,
+        user_id: UUID,
         branch_id: UUID,
     ) -> Cart | None:
         result = await self.session.execute(
             select(self.model)
             .options(selectinload(Cart.items).selectinload(CartItem.menu_item))
             .where(
-                self.model.customer_id == customer_id,
+                self.model.user_id == user_id,
                 self.model.branch_id == branch_id,
             )
         )
         return result.scalar_one_or_none()
 
-    async def get_by_customer_and_branch_for_update(
+    async def get_by_user_and_branch_for_update(
         self,
-        customer_id: UUID,
+        user_id: UUID,
         branch_id: UUID,
     ) -> Cart | None:
         result = await self.session.execute(
             select(self.model)
             .options(selectinload(Cart.items).selectinload(CartItem.menu_item))
             .where(
-                self.model.customer_id == customer_id,
+                self.model.user_id == user_id,
                 self.model.branch_id == branch_id,
             )
             .with_for_update()

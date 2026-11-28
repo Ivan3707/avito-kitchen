@@ -77,7 +77,7 @@ async def create_order(
     return await service.create_order(
         uow_factory=uow_factory,
         request=payload,
-        customer_email=x_user_email,
+        user_email=x_user_email,
         restaurant_client=RestaurantClient(
             settings.DEMO_RESTAURANT_URL,
         ),

@@ -22,10 +22,10 @@ class Order(TimestampMixin, Base):
         default=uuid4,
     )
 
-    customer_id: Mapped[UUID] = mapped_column(
+    user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey(
-            "customers.id",
+            "users.id",
             ondelete="RESTRICT",
         ),
         nullable=False,

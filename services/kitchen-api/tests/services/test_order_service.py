@@ -10,6 +10,7 @@ from app.infrastructure.database.models.restaurant import Restaurant
 from app.infrastructure.database.models.restaurant_branch import (
     RestaurantBranch,
 )
+from app.infrastructure.database.models.user import User
 from app.infrastructure.unit_of_work import UnitOfWork
 from app.integration.schemas.common import BusinessErrorCode
 from app.integration.schemas.orders import (
@@ -47,6 +48,14 @@ async def create_catalog(
     external_id = f"restaurant-{uuid4()}"
     branch_external_id = "branch-1"
     async with UnitOfWork(session_factory) as uow:
+        user = await uow.users.get_by_email("customer@example.com")
+        if user is None:
+            uow.users.add(
+                User(
+                    email="customer@example.com",
+                    password_hash="test-password-hash",
+                )
+            )
         restaurant = uow.restaurants.add(
             Restaurant(
                 external_id=external_id,
