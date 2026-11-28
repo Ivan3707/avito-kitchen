@@ -13,13 +13,14 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.infrastructure.database.base import Base, TimestampMixin
+from app.modules.orders.models.restaurant_order_item import (
+    RestaurantOrderItem,
+    RestaurantOrderItemSnapshot,
+)
 
 if TYPE_CHECKING:
     from app.modules.catalog.models.restaurant_branch import (
         RestaurantBranch,
-    )
-    from app.modules.orders.models.restaurant_order_item import (
-        RestaurantOrderItem,
     )
 
 
@@ -123,3 +124,90 @@ class RestaurantOrder(TimestampMixin, Base):
             name="ck_restaurant_order_status",
         ),
     )
+
+    @classmethod
+    def create_accepted(
+        cls,
+        external_id: str,
+        branch_id: UUID,
+        branch_external_id: str,
+        request_hash: str,
+        items: list[RestaurantOrderItemSnapshot],
+    ) -> "RestaurantOrder":
+        if branch_id is None:
+            raise ValueError("Accepted order requires a branch")
+        if not items:
+            raise ValueError("Accepted order requires items")
+        internal_ids = set()
+        external_ids = set()
+        for item in items:
+            if item.quantity <= 0 or item.unit_price <= 0:
+                raise ValueError("Quantity and price must be positive")
+            if (
+                item.menu_item_id in internal_ids
+                or item.menu_item_external_id in external_ids
+            ):
+                raise ValueError("Order items must be unique")
+            internal_ids.add(item.menu_item_id)
+            external_ids.add(item.menu_item_external_id)
+
+        order_id = uuid4()
+        return cls(
+            id=order_id,
+            external_id=external_id,
+            branch_id=branch_id,
+            branch_external_id=branch_external_id,
+            request_hash=request_hash,
+            status="accepted",
+            accepted=True,
+            rejection_code=None,
+            rejection_reason=None,
+            rejection_menu_item_external_id=None,
+            rejection_old_price=None,
+            rejection_current_price=None,
+            items=[
+                RestaurantOrderItem(
+                    order_id=order_id,
+                    menu_item_id=item.menu_item_id,
+                    menu_item_external_id=item.menu_item_external_id,
+                    menu_item_name=item.menu_item_name,
+                    quantity=item.quantity,
+                    unit_price=item.unit_price,
+                )
+                for item in items
+            ],
+        )
+
+    @classmethod
+    def create_rejected(
+        cls,
+        external_id: str,
+        branch_id: UUID | None,
+        branch_external_id: str,
+        request_hash: str,
+        code: str,
+        message: str,
+        menu_item_external_id: str | None = None,
+        old_price: int | None = None,
+        current_price: int | None = None,
+    ) -> "RestaurantOrder":
+        if not code or not code.strip() or not message or not message.strip():
+            raise ValueError("Rejection requires a code and message")
+        if old_price is not None and old_price <= 0:
+            raise ValueError("Old price must be positive")
+        if current_price is not None and current_price <= 0:
+            raise ValueError("Current price must be positive")
+        return cls(
+            external_id=external_id,
+            branch_id=branch_id,
+            branch_external_id=branch_external_id,
+            request_hash=request_hash,
+            status="rejected",
+            accepted=False,
+            rejection_code=code,
+            rejection_reason=message,
+            rejection_menu_item_external_id=menu_item_external_id,
+            rejection_old_price=old_price,
+            rejection_current_price=current_price,
+            items=[],
+        )

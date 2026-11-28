@@ -53,7 +53,6 @@ class BranchItemRepository(Repository):
 
 class FakeUow:
     orders = []
-    order_items = []
     relation_price = 100
     relation_available = True
     include_relation = True
@@ -89,7 +88,6 @@ class FakeUow:
             [relation] if self.include_relation else []
         )
         self.orders.restaurant_orders = Repository(type(self).orders)
-        self.orders.restaurant_order_items = Repository(self.order_items)
 
     async def __aenter__(self):
         return self
@@ -120,7 +118,6 @@ def order(
 @pytest.mark.asyncio
 async def test_create_order_is_idempotent(monkeypatch) -> None:
     FakeUow.orders = []
-    FakeUow.order_items = []
     monkeypatch.setattr("app.modules.orders.service.UnitOfWork", FakeUow)
     service = OrderService(object())
     first = await service.create_order(order())
@@ -128,7 +125,8 @@ async def test_create_order_is_idempotent(monkeypatch) -> None:
     assert first.accepted is True
     assert second.restaurant_order_id == first.restaurant_order_id
     assert len(FakeUow.orders) == 1
-    assert FakeUow.order_items[0].unit_price == 100
+    assert len(FakeUow.orders[0].items) == 1
+    assert FakeUow.orders[0].items[0].unit_price == 100
 
 
 @pytest.mark.asyncio
@@ -138,10 +136,13 @@ async def test_same_order_id_with_different_payload_conflicts(
     FakeUow.orders = []
     monkeypatch.setattr("app.modules.orders.service.UnitOfWork", FakeUow)
     service = OrderService(object())
-    await service.create_order(order())
+    first = await service.create_order(order())
     response = await service.create_order(order(price=101))
     assert response.accepted is False
     assert response.reason.code == BusinessErrorCode.ORDER_ID_CONFLICT
+    assert len(FakeUow.orders) == 1
+    assert FakeUow.orders[0].id == first.restaurant_order_id
+    assert FakeUow.orders[0].items[0].unit_price == 100
 
 
 @pytest.mark.asyncio
@@ -151,6 +152,11 @@ async def test_price_change_is_rejected(monkeypatch) -> None:
     response = await OrderService(object()).create_order(order(price=101))
     assert response.accepted is False
     assert response.reason.code == BusinessErrorCode.PRICE_CHANGED
+    assert len(FakeUow.orders) == 1
+    assert FakeUow.orders[0].items == []
+    repeated = await OrderService(object()).create_order(order(price=101))
+    assert repeated.reason == response.reason
+    assert len(FakeUow.orders) == 1
 
 
 @pytest.mark.asyncio
@@ -194,3 +200,4 @@ async def test_unknown_branch_rejection_is_idempotent(monkeypatch) -> None:
     assert repeated.reason == first.reason
     assert conflict.reason.code == BusinessErrorCode.ORDER_ID_CONFLICT
     assert len(FakeUow.orders) == 1
+    assert FakeUow.orders[0].items == []

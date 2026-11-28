@@ -5,7 +5,9 @@ from app.infrastructure.unit_of_work import UnitOfWork
 from app.modules.orders.models.restaurant_order import (
     RestaurantOrder as RestaurantOrderModel,
 )
-from app.modules.orders.models.restaurant_order_item import RestaurantOrderItem
+from app.modules.orders.models.restaurant_order_item import (
+    RestaurantOrderItemSnapshot,
+)
 from app.modules.orders.schemas import (
     BusinessErrorCode,
     RestaurantOrder,
@@ -51,14 +53,12 @@ class OrderService:
                     message="Branch is unavailable",
                 )
                 uow.orders.restaurant_orders.add(
-                    RestaurantOrderModel(
+                    RestaurantOrderModel.create_rejected(
                         external_id=request.order_id,
                         branch_id=branch.id if branch is not None else None,
                         branch_external_id=request.branch_external_id,
-                        status="rejected",
-                        accepted=False,
-                        rejection_code=issue.code.value,
-                        rejection_reason=issue.message,
+                        code=issue.code.value,
+                        message=issue.message,
                         request_hash=request_hash,
                     )
                 )
@@ -107,48 +107,39 @@ class OrderService:
 
             if issue is not None:
                 uow.orders.restaurant_orders.add(
-                    RestaurantOrderModel(
+                    RestaurantOrderModel.create_rejected(
                         external_id=request.order_id,
                         branch_id=branch.id,
                         branch_external_id=request.branch_external_id,
-                        status="rejected",
-                        accepted=False,
-                        rejection_code=issue.code.value,
-                        rejection_reason=issue.message,
-                        rejection_menu_item_external_id=(
-                            issue.menu_item_external_id
-                        ),
-                        rejection_old_price=issue.old_price,
-                        rejection_current_price=issue.current_price,
+                        code=issue.code.value,
+                        message=issue.message,
+                        menu_item_external_id=(issue.menu_item_external_id),
+                        old_price=issue.old_price,
+                        current_price=issue.current_price,
                         request_hash=request_hash,
                     )
                 )
                 return RestaurantOrderResponse(accepted=False, reason=issue)
 
             order = uow.orders.restaurant_orders.add(
-                RestaurantOrderModel(
+                RestaurantOrderModel.create_accepted(
                     external_id=request.order_id,
                     branch_id=branch.id,
                     branch_external_id=request.branch_external_id,
-                    status="accepted",
-                    accepted=True,
-                    rejection_code=None,
-                    rejection_reason=None,
                     request_hash=request_hash,
+                    items=[
+                        RestaurantOrderItemSnapshot(
+                            menu_item_id=menu_item.id,
+                            menu_item_external_id=menu_item.external_id,
+                            menu_item_name=menu_item.name,
+                            quantity=requested_item.quantity,
+                            unit_price=relation.price,
+                        )
+                        for requested_item, menu_item, relation in validated_items
+                    ],
                 )
             )
             await uow.flush()
-            for requested_item, menu_item, relation in validated_items:
-                uow.orders.restaurant_order_items.add(
-                    RestaurantOrderItem(
-                        order_id=order.id,
-                        menu_item_id=menu_item.id,
-                        menu_item_external_id=menu_item.external_id,
-                        menu_item_name=menu_item.name,
-                        quantity=requested_item.quantity,
-                        unit_price=relation.price,
-                    )
-                )
             return RestaurantOrderResponse(
                 accepted=True,
                 restaurant_order_id=order.id,

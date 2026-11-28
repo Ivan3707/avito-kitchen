@@ -19,7 +19,6 @@ async def test_repository_groups_share_one_session() -> None:
             uow.catalog.branch_menu_items,
             uow.catalog.catalog_state,
             uow.orders.restaurant_orders,
-            uow.orders.restaurant_order_items,
         )
         assert all(
             repository.session is session for repository in repositories

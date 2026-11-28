@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
@@ -17,6 +18,15 @@ if TYPE_CHECKING:
     from app.modules.orders.models.restaurant_order import (
         RestaurantOrder,
     )
+
+
+@dataclass(frozen=True)
+class RestaurantOrderItemSnapshot:
+    menu_item_id: UUID
+    menu_item_external_id: str
+    menu_item_name: str
+    quantity: int
+    unit_price: int
 
 
 class RestaurantOrderItem(TimestampMixin, Base):
