@@ -73,7 +73,7 @@ async def test_create_order_contract(test_session_factory):
         return UnitOfWork(test_session_factory)
 
     async with factory() as uow:
-        await SyncService().sync(uow, payload)
+        await SyncService(factory).sync(uow, payload)
         uow.users.users.add(
             User(email=user_email, password_hash="test-password-hash")
         )

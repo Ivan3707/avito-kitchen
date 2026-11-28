@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from app.core.errors import ConflictError
-from app.infrastructure.unit_of_work import UnitOfWork
+from app.infrastructure.unit_of_work import UnitOfWork, UowFactory
 from app.modules.catalog.models.branch_menu_item import BranchMenuItem
 from app.modules.catalog.models.menu import Menu
 from app.modules.catalog.models.menu_item import MenuItem
@@ -23,7 +23,7 @@ SNAPSHOT_RETENTION = timedelta(days=30)
 
 
 class SyncService:
-    def __init__(self, uow_factory=None):
+    def __init__(self, uow_factory: UowFactory) -> None:
         self.uow_factory = uow_factory
 
     async def apply(self, payload: SyncPayload) -> SyncResponse:

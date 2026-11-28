@@ -69,7 +69,7 @@ async def test_branch_menus_expose_branch_specific_prices(
         )
     await uow.session.flush()
 
-    service = CatalogService()
+    service = CatalogService(lambda: UnitOfWork(uow.session_factory))
     first = await service.get_branch_menu(uow, branches[0].id)
     second = await service.get_branch_menu(uow, branches[1].id)
 
@@ -129,7 +129,9 @@ async def test_unpriced_branch_item_is_reported_unavailable(
     )
     await uow.session.flush()
 
-    response = await CatalogService().get_branch_menu(uow, branch.id)
+    response = await CatalogService(
+        lambda: UnitOfWork(uow.session_factory)
+    ).get_branch_menu(uow, branch.id)
 
     assert response.items[0].price is None
     assert response.items[0].is_available is False

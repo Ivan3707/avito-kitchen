@@ -59,6 +59,50 @@ def test_auth_routes_and_safe_validation_response():
         app.dependency_overrides.clear()
 
 
+@pytest.mark.parametrize(
+    ("path", "body", "field", "invalid_value"),
+    [
+        (
+            "/api/v1/auth/register",
+            {"email": "invalid-email-secret", "password": "ValidPassword123!"},
+            "email",
+            "invalid-email-secret",
+        ),
+        (
+            "/api/v1/auth/register",
+            {"email": "user@example.com", "password": "short-secret"},
+            "password",
+            "short-secret",
+        ),
+        (
+            "/api/v1/auth/verify-email",
+            {"token": "invalid!token", "password": "ValidPassword123!"},
+            "token",
+            "invalid!token",
+        ),
+    ],
+)
+def test_invalid_auth_fields_do_not_expose_input_or_call_service(
+    path, body, field, invalid_value
+):
+    service = FakeRegistrationService()
+    app.dependency_overrides[get_registration_service] = lambda: service
+    try:
+        with TestClient(app) as client:
+            response = client.post(path, json=body)
+        assert response.status_code == 422
+        assert ["body", field] in [
+            error["loc"] for error in response.json()["detail"]
+        ]
+        assert invalid_value not in response.text
+        for sensitive_field in ("password", "token"):
+            if sensitive_field in body:
+                assert body[sensitive_field] not in response.text
+        assert service.calls == []
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_auth_rate_limit_sets_retry_after(monkeypatch):
     monkeypatch.setattr(settings, "AUTH_REGISTER_RATE_LIMIT", 1)
     app.dependency_overrides[get_registration_service] = lambda: (

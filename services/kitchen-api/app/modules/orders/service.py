@@ -1,5 +1,4 @@
 import json
-from collections.abc import Callable
 from hashlib import sha256
 from uuid import UUID
 
@@ -9,7 +8,7 @@ from app.infrastructure.clients.restaurant import (
     RestaurantCommunicationError,
     RestaurantTimeoutError,
 )
-from app.infrastructure.unit_of_work import UnitOfWork
+from app.infrastructure.unit_of_work import UnitOfWork, UowFactory
 from app.modules.orders.models.order import Order
 from app.modules.orders.models.order_item import OrderItem
 from app.modules.orders.schemas import (
@@ -21,11 +20,11 @@ from app.modules.orders.schemas import (
     ValidationIssue,
 )
 
-UowFactory = Callable[[], UnitOfWork]
-
 
 class OrderService:
-    def __init__(self, uow_factory=None, restaurant_client=None):
+    def __init__(
+        self, uow_factory: UowFactory, restaurant_client: RestaurantClient
+    ) -> None:
         self.uow_factory = uow_factory
         self.restaurant_client = restaurant_client
 
@@ -128,13 +127,9 @@ class OrderService:
         self,
         request: CreateOrderRequest,
         user_email: str,
-        uow_factory: UowFactory | None = None,
-        restaurant_client: RestaurantClient | None = None,
     ) -> CreateOrderResponse:
-        uow_factory = uow_factory or self.uow_factory
-        restaurant_client = restaurant_client or self.restaurant_client
         request_hash = self._calculate_request_hash(request)
-        async with uow_factory() as uow:
+        async with self.uow_factory() as uow:
             restaurant = await uow.catalog.restaurants.get_by_external_id(
                 request.restaurant_external_id
             )
@@ -210,7 +205,7 @@ class OrderService:
                 local_order_id = order.id
 
         try:
-            restaurant_response = await restaurant_client.create_order(
+            restaurant_response = await self.restaurant_client.create_order(
                 {
                     "order_id": request.order_id,
                     "branch_external_id": request.branch_external_id,
@@ -225,7 +220,7 @@ class OrderService:
                 "Restaurant result is unknown; retry with the same order_id",
             )
 
-        async with uow_factory() as uow:
+        async with self.uow_factory() as uow:
             restaurant = await uow.catalog.restaurants.get_by_external_id(
                 request.restaurant_external_id
             )

@@ -1,7 +1,7 @@
 from uuid import UUID, uuid4
 
 from app.core.errors import ConflictError, ResourceNotFoundError
-from app.infrastructure.unit_of_work import UnitOfWork
+from app.infrastructure.unit_of_work import UnitOfWork, UowFactory
 from app.modules.cart.models.cart import Cart
 from app.modules.cart.models.cart_item import CartItem
 from app.modules.cart.schemas import (
@@ -13,7 +13,7 @@ from app.modules.cart.schemas import (
 
 
 class CartService:
-    def __init__(self, uow_factory=None):
+    def __init__(self, uow_factory: UowFactory) -> None:
         self.uow_factory = uow_factory
 
     async def get_cart_by_email(

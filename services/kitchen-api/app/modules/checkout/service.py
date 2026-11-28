@@ -1,7 +1,6 @@
-from collections.abc import Callable
 from uuid import UUID
 
-from app.infrastructure.unit_of_work import UnitOfWork
+from app.infrastructure.unit_of_work import UowFactory
 from app.modules.cart.service import CartService
 from app.modules.checkout.schemas import CheckoutRequest, CheckoutResponse
 from app.modules.orders.schemas import CreateOrderRequest, OrderItemRequest
@@ -13,8 +12,8 @@ class CheckoutService:
         self,
         cart_service: CartService,
         order_service: OrderService,
-        uow_factory,
-    ):
+        uow_factory: UowFactory,
+    ) -> None:
         self.cart_service = cart_service
         self.order_service = order_service
         self.uow_factory = uow_factory
@@ -24,10 +23,8 @@ class CheckoutService:
         user_email: str,
         branch_id: UUID,
         request: CheckoutRequest,
-        uow_factory: Callable[[], UnitOfWork] | None = None,
     ) -> CheckoutResponse:
-        uow_factory = uow_factory or self.uow_factory
-        async with uow_factory() as uow:
+        async with self.uow_factory() as uow:
             user = await uow.users.users.get_by_email(user_email)
             if user is None:
                 return CheckoutResponse(
@@ -100,7 +97,6 @@ class CheckoutService:
             )
 
         result = await self.order_service.create_order(
-            uow_factory=uow_factory,
             request=order_request,
             user_email=user_email,
         )
@@ -115,7 +111,7 @@ class CheckoutService:
                 ),
             )
 
-        async with uow_factory() as uow:
+        async with self.uow_factory() as uow:
             user = await uow.users.users.get_by_email(user_email)
             await self.cart_service.remove_ordered_quantities(
                 uow, user.id, branch_id, ordered_quantities

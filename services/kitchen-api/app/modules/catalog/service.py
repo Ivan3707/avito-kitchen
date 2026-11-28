@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from app.infrastructure.unit_of_work import UnitOfWork
+from app.infrastructure.unit_of_work import UnitOfWork, UowFactory
 from app.modules.catalog.schemas import (
     BranchMenuResponse,
     BranchResponse,
@@ -10,7 +10,7 @@ from app.modules.catalog.schemas import (
 
 
 class CatalogService:
-    def __init__(self, uow_factory=None):
+    def __init__(self, uow_factory: UowFactory) -> None:
         self.uow_factory = uow_factory
 
     async def list_restaurants(self) -> list[RestaurantResponse]:

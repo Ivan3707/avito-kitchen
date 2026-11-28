@@ -90,7 +90,9 @@ async def test_cart_uses_selected_branch_price(
     )
     await uow.session.flush()
 
-    response = await CartService().get_cart(uow, user.id, branch.id)
+    response = await CartService(
+        lambda: UnitOfWork(uow.session_factory)
+    ).get_cart(uow, user.id, branch.id)
 
     assert response.items[0].price == price
     assert response.items[0].is_available is expected_available

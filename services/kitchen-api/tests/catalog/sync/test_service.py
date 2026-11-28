@@ -95,8 +95,12 @@ def make_payload(
 async def test_first_sync_and_exact_duplicate(uow: UnitOfWork) -> None:
     external_id = f"restaurant-{uuid4()}"
     payload = make_payload(restaurant_external_id=external_id, revision=0)
-    first = await SyncService().sync(uow, payload)
-    duplicate = await SyncService().sync(uow, payload)
+    first = await SyncService(lambda: UnitOfWork(uow.session_factory)).sync(
+        uow, payload
+    )
+    duplicate = await SyncService(
+        lambda: UnitOfWork(uow.session_factory)
+    ).sync(uow, payload)
     assert first.status == "updated"
     assert duplicate.status == "ignored"
     assert duplicate.reason == "DUPLICATE_SNAPSHOT"
@@ -108,7 +112,7 @@ async def test_revision_orders_snapshots_and_allows_gaps(
 ) -> None:
     external_id = f"restaurant-{uuid4()}"
     now = datetime.now(UTC)
-    service = SyncService()
+    service = SyncService(lambda: UnitOfWork(uow.session_factory))
     await service.sync(
         uow,
         make_payload(
@@ -151,7 +155,7 @@ async def test_same_revision_and_checksum_is_duplicate_state(
     uow: UnitOfWork,
 ) -> None:
     external_id = f"restaurant-{uuid4()}"
-    service = SyncService()
+    service = SyncService(lambda: UnitOfWork(uow.session_factory))
     await service.sync(
         uow,
         make_payload(restaurant_external_id=external_id, revision=2),
@@ -173,7 +177,7 @@ async def test_new_revision_with_same_checksum_is_processed(
     uow: UnitOfWork,
 ) -> None:
     external_id = f"restaurant-{uuid4()}"
-    service = SyncService()
+    service = SyncService(lambda: UnitOfWork(uow.session_factory))
     await service.sync(
         uow,
         make_payload(restaurant_external_id=external_id, revision=1),
@@ -192,7 +196,7 @@ async def test_same_revision_with_different_content_conflicts(
     uow: UnitOfWork,
 ) -> None:
     external_id = f"restaurant-{uuid4()}"
-    service = SyncService()
+    service = SyncService(lambda: UnitOfWork(uow.session_factory))
     await service.sync(
         uow,
         make_payload(restaurant_external_id=external_id, revision=1),
@@ -220,7 +224,7 @@ async def test_snapshot_id_reuse_with_other_content_conflicts(
 ) -> None:
     external_id = f"restaurant-{uuid4()}"
     snapshot_id = uuid4()
-    service = SyncService()
+    service = SyncService(lambda: UnitOfWork(uow.session_factory))
     await service.sync(
         uow,
         make_payload(
@@ -245,7 +249,7 @@ async def test_snapshot_id_reuse_by_other_restaurant_conflicts(
     uow: UnitOfWork,
 ) -> None:
     snapshot_id = uuid4()
-    service = SyncService()
+    service = SyncService(lambda: UnitOfWork(uow.session_factory))
     await service.sync(
         uow,
         make_payload(
@@ -278,7 +282,7 @@ async def test_legacy_restaurant_accepts_revision_zero(
         )
     )
     await uow.flush()
-    response = await SyncService().sync(
+    response = await SyncService(lambda: UnitOfWork(uow.session_factory)).sync(
         uow,
         make_payload(restaurant_external_id=external_id, revision=0),
     )
@@ -292,7 +296,7 @@ async def test_full_snapshot_deactivates_missing_catalog(
     uow: UnitOfWork,
 ) -> None:
     external_id = f"restaurant-{uuid4()}"
-    service = SyncService()
+    service = SyncService(lambda: UnitOfWork(uow.session_factory))
     await service.sync(
         uow,
         make_payload(restaurant_external_id=external_id, revision=1),
@@ -328,7 +332,7 @@ async def test_full_snapshot_preserves_historical_order_references(
     uow: UnitOfWork,
 ) -> None:
     external_id = f"restaurant-{uuid4()}"
-    service = SyncService()
+    service = SyncService(lambda: UnitOfWork(uow.session_factory))
     await service.sync(
         uow,
         make_payload(restaurant_external_id=external_id, revision=1),
@@ -391,7 +395,7 @@ async def test_history_is_recorded_and_cleaned_per_restaurant(
 ) -> None:
     first_external_id = f"restaurant-{uuid4()}"
     second_external_id = f"restaurant-{uuid4()}"
-    service = SyncService()
+    service = SyncService(lambda: UnitOfWork(uow.session_factory))
     first_payload = make_payload(
         restaurant_external_id=first_external_id,
         revision=1,
@@ -448,7 +452,9 @@ async def test_sync_rolls_back_on_error(test_session_factory) -> None:
     payload = make_payload(restaurant_external_id=external_id, revision=0)
     with pytest.raises(RuntimeError, match="fail after synchronization"):
         async with UnitOfWork(test_session_factory) as local_uow:
-            await SyncService().sync(local_uow, payload)
+            await SyncService(lambda: UnitOfWork(test_session_factory)).sync(
+                local_uow, payload
+            )
             raise RuntimeError("fail after synchronization")
     async with UnitOfWork(test_session_factory) as check_uow:
         assert (
@@ -462,7 +468,7 @@ async def test_concurrent_snapshots_same_revision_do_not_both_apply(
     test_session_factory,
 ) -> None:
     external_id = f"restaurant-{uuid4()}"
-    service = SyncService()
+    service = SyncService(lambda: UnitOfWork(test_session_factory))
 
     async def apply(branch_name: str):
         async with UnitOfWork(test_session_factory) as local_uow:

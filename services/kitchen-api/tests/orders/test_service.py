@@ -125,18 +125,14 @@ def request(restaurant_id, branch_id, *, order_id="order-1", price=100):
 async def test_create_order_and_retry_are_idempotent(test_session_factory):
     restaurant_id, branch_id = await create_catalog(test_session_factory)
     client = FakeRestaurantClient()
-    service = OrderService()
 
     def uow_factory() -> UnitOfWork:
         return UnitOfWork(test_session_factory)
 
+    service = OrderService(uow_factory, client)
     order_request = request(restaurant_id, branch_id)
-    first = await service.create_order(
-        uow_factory, order_request, "customer@example.com", client
-    )
-    second = await service.create_order(
-        uow_factory, order_request, "customer@example.com", client
-    )
+    first = await service.create_order(order_request, "customer@example.com")
+    second = await service.create_order(order_request, "customer@example.com")
     assert first.accepted is True
     assert second.restaurant_order_id == first.restaurant_order_id
     assert client.calls == 1
@@ -148,22 +144,18 @@ async def test_same_order_id_with_other_payload_is_rejected(
 ):
     restaurant_id, branch_id = await create_catalog(test_session_factory)
     client = FakeRestaurantClient()
-    service = OrderService()
 
     def factory() -> UnitOfWork:
         return UnitOfWork(test_session_factory)
 
+    service = OrderService(factory, client)
     await service.create_order(
-        factory,
         request(restaurant_id, branch_id),
         "customer@example.com",
-        client,
     )
     conflict = await service.create_order(
-        factory,
         request(restaurant_id, branch_id, price=101),
         "customer@example.com",
-        client,
     )
     assert conflict.accepted is False
     assert conflict.reason.code == BusinessErrorCode.ORDER_ID_CONFLICT
@@ -181,22 +173,18 @@ async def test_restaurant_rejection_is_stored(test_session_factory):
             ),
         )
     )
-    service = OrderService()
 
     def factory() -> UnitOfWork:
         return UnitOfWork(test_session_factory)
 
+    service = OrderService(factory, client)
     first = await service.create_order(
-        factory,
         request(restaurant_id, branch_id),
         "customer@example.com",
-        client,
     )
     retry = await service.create_order(
-        factory,
         request(restaurant_id, branch_id),
         "customer@example.com",
-        client,
     )
     assert first.accepted is False
     assert first.order_id is not None
@@ -207,22 +195,21 @@ async def test_restaurant_rejection_is_stored(test_session_factory):
 @pytest.mark.asyncio
 async def test_timeout_leaves_recoverable_pending_order(test_session_factory):
     restaurant_id, branch_id = await create_catalog(test_session_factory)
-    service = OrderService()
 
     def factory() -> UnitOfWork:
         return UnitOfWork(test_session_factory)
 
-    timed_out = await service.create_order(
-        factory,
+    timed_out = await OrderService(
+        factory, TimeoutRestaurantClient()
+    ).create_order(
         request(restaurant_id, branch_id),
         "customer@example.com",
-        TimeoutRestaurantClient(),
     )
-    recovered = await service.create_order(
-        factory,
+    recovered = await OrderService(
+        factory, FakeRestaurantClient()
+    ).create_order(
         request(restaurant_id, branch_id),
         "customer@example.com",
-        FakeRestaurantClient(),
     )
     assert timed_out.reason.code == BusinessErrorCode.RESTAURANT_TIMEOUT
     assert recovered.accepted is True
@@ -233,7 +220,6 @@ async def test_failed_local_finalize_commit_is_recoverable(
     test_session_factory,
 ):
     restaurant_id, branch_id = await create_catalog(test_session_factory)
-    service = OrderService()
     client = FakeRestaurantClient()
     created = 0
 
@@ -248,19 +234,18 @@ async def test_failed_local_finalize_commit_is_recoverable(
             return FailingCommitUow(test_session_factory)
         return UnitOfWork(test_session_factory)
 
+    service = OrderService(failing_factory, client)
     with pytest.raises(RuntimeError, match="local commit failure"):
         await service.create_order(
-            failing_factory,
             request(restaurant_id, branch_id),
             "customer@example.com",
-            client,
         )
 
-    recovered = await service.create_order(
-        lambda: UnitOfWork(test_session_factory),
+    recovered = await OrderService(
+        lambda: UnitOfWork(test_session_factory), client
+    ).create_order(
         request(restaurant_id, branch_id),
         "customer@example.com",
-        client,
     )
     assert recovered.accepted is True
 
@@ -269,11 +254,11 @@ async def test_failed_local_finalize_commit_is_recoverable(
 async def test_catalog_rejection_avoids_restaurant_call(test_session_factory):
     restaurant_id, branch_id = await create_catalog(test_session_factory)
     client = FakeRestaurantClient()
-    result = await OrderService().create_order(
-        lambda: UnitOfWork(test_session_factory),
+    result = await OrderService(
+        lambda: UnitOfWork(test_session_factory), client
+    ).create_order(
         request(restaurant_id, branch_id, price=101),
         "customer@example.com",
-        client,
     )
     assert result.accepted is False
     assert result.reason.code == BusinessErrorCode.PRICE_CHANGED
@@ -290,11 +275,11 @@ async def test_item_without_branch_price_is_unavailable(
         is_available=False,
     )
     client = FakeRestaurantClient()
-    result = await OrderService().create_order(
-        lambda: UnitOfWork(test_session_factory),
+    result = await OrderService(
+        lambda: UnitOfWork(test_session_factory), client
+    ).create_order(
         request(restaurant_id, branch_id),
         "customer@example.com",
-        client,
     )
     assert result.accepted is False
     assert result.reason.code == BusinessErrorCode.PRODUCT_UNAVAILABLE

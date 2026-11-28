@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.modules.auth.repositories.group import AuthRepositories
@@ -89,3 +91,6 @@ class UnitOfWork:
 
     async def flush(self):
         await self.session.flush()
+
+
+UowFactory = Callable[[], UnitOfWork]

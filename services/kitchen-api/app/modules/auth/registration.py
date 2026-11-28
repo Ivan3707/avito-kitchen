@@ -1,5 +1,4 @@
 import logging
-from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import NoReturn
 from uuid import UUID
@@ -14,7 +13,7 @@ from app.core.security.action_tokens import (
 from app.core.security.email import normalize_email
 from app.core.security.passwords import hash_password, verify_password
 from app.infrastructure.clients.email import EmailClient, EmailDeliveryError
-from app.infrastructure.unit_of_work import UnitOfWork
+from app.infrastructure.unit_of_work import UowFactory
 from app.modules.auth.errors import (
     AuthTechnicalError,
     InvalidVerificationError,
@@ -25,8 +24,6 @@ from app.modules.auth.models.user_action_token import (
 )
 from app.modules.users.models.user import User
 from app.modules.users.service import UserService
-
-UowFactory = Callable[[], UnitOfWork]
 
 EMAIL_TOKEN_TTL = timedelta(hours=24)
 TOKEN_MINIMUM_INTERVAL = timedelta(seconds=60)
