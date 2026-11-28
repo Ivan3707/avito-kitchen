@@ -3,26 +3,35 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.api.auth import router as auth_router
-from app.api.cart import router as cart_router
-from app.api.catalog import router as catalog_router
-from app.api.integration import router as integration_router
-from app.services.errors import (
-    AuthTechnicalError,
+from app.core.errors import (
     ConflictError,
-    InvalidVerificationError,
     RateLimitExceeded,
     ResourceNotFoundError,
 )
+from app.core.lifespan import lifespan
+from app.infrastructure.database import models  # noqa: F401
+from app.modules.auth.errors import (
+    AuthTechnicalError,
+    InvalidVerificationError,
+)
+from app.modules.auth.router import router as auth_router
+from app.modules.cart.router import router as cart_router
+from app.modules.catalog.router import router as catalog_router
+from app.modules.catalog.sync.router import router as sync_router
+from app.modules.checkout.router import router as checkout_router
+from app.modules.orders.router import router as orders_router
 
 app = FastAPI(
     title="Avito Kitchen",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.include_router(catalog_router)
-app.include_router(integration_router)
+app.include_router(sync_router)
+app.include_router(orders_router)
 app.include_router(cart_router)
+app.include_router(checkout_router)
 app.include_router(auth_router)
 
 _AUTH_REQUEST_FIELDS = {"email", "password", "token"}

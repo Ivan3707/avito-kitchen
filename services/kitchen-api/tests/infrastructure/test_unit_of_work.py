@@ -4,8 +4,10 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.infrastructure.database.models.restaurant import Restaurant
 from app.infrastructure.unit_of_work import UnitOfWork
+from app.modules.catalog.models.restaurant import Restaurant
+
+pytestmark = pytest.mark.integration
 
 
 @pytest.mark.asyncio
@@ -13,7 +15,7 @@ async def test_unit_of_work_uses_same_session_for_repository(
     test_session_factory,
 ):
     async with UnitOfWork(test_session_factory) as uow:
-        assert uow.restaurants.session is uow.session
+        assert uow.catalog.restaurants.session is uow.session
 
 
 @pytest.mark.asyncio
@@ -28,10 +30,10 @@ async def test_unit_of_work_commits_on_success(
     )
 
     async with UnitOfWork(test_session_factory) as uow:
-        uow.restaurants.add(restaurant)
+        uow.catalog.restaurants.add(restaurant)
 
     async with UnitOfWork(test_session_factory) as uow:
-        saved_restaurant = await uow.restaurants.get_by_external_id(
+        saved_restaurant = await uow.catalog.restaurants.get_by_external_id(
             external_id
         )
 
@@ -53,12 +55,12 @@ async def test_unit_of_work_rolls_back_on_exception(
 
     with pytest.raises(RuntimeError):
         async with UnitOfWork(test_session_factory) as uow:
-            uow.restaurants.add(restaurant)
+            uow.catalog.restaurants.add(restaurant)
 
             raise RuntimeError("test rollback")
 
     async with UnitOfWork(test_session_factory) as uow:
-        saved_restaurant = await uow.restaurants.get_by_external_id(
+        saved_restaurant = await uow.catalog.restaurants.get_by_external_id(
             external_id
         )
 

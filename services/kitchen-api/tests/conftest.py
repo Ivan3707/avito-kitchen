@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+from app.infrastructure.database import models  # noqa: F401
 from app.infrastructure.database.base import Base
 from app.infrastructure.unit_of_work import UnitOfWork
 

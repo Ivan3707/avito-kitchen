@@ -3,7 +3,7 @@ from typing import Any
 import httpx
 from pydantic import ValidationError
 
-from app.integration.schemas.orders import RestaurantOrderResponse
+from app.modules.orders.schemas import RestaurantOrderResponse
 
 
 class RestaurantTimeoutError(Exception):
@@ -15,20 +15,20 @@ class RestaurantCommunicationError(Exception):
 
 
 class RestaurantClient:
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, client: httpx.AsyncClient) -> None:
         self.base_url = base_url.rstrip("/")
+        self.client = client
 
     async def create_order(
         self,
         payload: dict[str, Any],
     ) -> RestaurantOrderResponse:
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{self.base_url}/orders",
-                    json=payload,
-                    timeout=5.0,
-                )
+            response = await self.client.post(
+                f"{self.base_url}/orders",
+                json=payload,
+                timeout=5.0,
+            )
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             raise RestaurantTimeoutError from exc
 

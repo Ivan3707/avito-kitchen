@@ -1,24 +1,10 @@
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.infrastructure.repositories.branch_menu_item import (
-    BranchMenuItemRepository,
-)
-from app.infrastructure.repositories.cart import CartRepository
-from app.infrastructure.repositories.menu import MenuRepository
-from app.infrastructure.repositories.menu_item import MenuItemRepository
-from app.infrastructure.repositories.order import OrderRepository
-from app.infrastructure.repositories.order_item import OrderItemRepository
-from app.infrastructure.repositories.restaurant import RestaurantRepository
-from app.infrastructure.repositories.restaurant_branch import (
-    RestaurantBranchRepository,
-)
-from app.infrastructure.repositories.sync_snapshot import (
-    SyncSnapshotRepository,
-)
-from app.infrastructure.repositories.user import UserRepository
-from app.infrastructure.repositories.user_action_token import (
-    UserActionTokenRepository,
-)
+from app.modules.auth.repositories.group import AuthRepositories
+from app.modules.cart.repositories.group import CartRepositories
+from app.modules.catalog.repositories.group import CatalogRepositories
+from app.modules.orders.repositories.group import OrderRepositories
+from app.modules.users.repositories.group import UserRepositories
 
 
 class UnitOfWork:
@@ -38,17 +24,11 @@ class UnitOfWork:
         try:
             self.session = self.session_factory()
 
-            self.restaurants = RestaurantRepository(self.session)
-            self.users = UserRepository(self.session)
-            self.user_action_tokens = UserActionTokenRepository(self.session)
-            self.restaurant_branches = RestaurantBranchRepository(self.session)
-            self.menus = MenuRepository(self.session)
-            self.menu_items = MenuItemRepository(self.session)
-            self.orders = OrderRepository(self.session)
-            self.order_items = OrderItemRepository(self.session)
-            self.carts = CartRepository(self.session)
-            self.branch_menu_items = BranchMenuItemRepository(self.session)
-            self.sync_snapshots = SyncSnapshotRepository(self.session)
+            self.catalog = CatalogRepositories(self.session)
+            self.cart = CartRepositories(self.session)
+            self.orders = OrderRepositories(self.session)
+            self.users = UserRepositories(self.session)
+            self.auth = AuthRepositories(self.session)
             return self
         except BaseException as exc:
             if self.session is not None:

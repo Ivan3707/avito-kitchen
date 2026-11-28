@@ -28,6 +28,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["unit: isolated tests", "integration: PostgreSQL tests", "contract: API and schema contract tests"]
 pythonpath = ["."]
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
