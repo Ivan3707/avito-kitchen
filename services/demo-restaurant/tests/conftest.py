@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+from app.infrastructure.database import models  # noqa: F401
+
 
 def _test_database_url() -> str:
     value = os.getenv("TEST_DATABASE_URL")

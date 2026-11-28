@@ -6,6 +6,7 @@ from app.infrastructure.clients.kitchen import (
     KitchenCommunicationError,
     KitchenTimeoutError,
 )
+from app.infrastructure.database import models  # noqa: F401
 from app.modules.catalog.sync.router import router as catalog_sync_router
 from app.modules.orders.router import router as orders_router
 

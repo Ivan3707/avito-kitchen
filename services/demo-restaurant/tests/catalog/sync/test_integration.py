@@ -37,9 +37,22 @@ async def test_sync_sends_current_contract(monkeypatch) -> None:
                 "name": "Restaurant",
                 "description": None,
             },
-            "branches": [],
+            "branches": [
+                {
+                    "external_id": "branch-1",
+                    "name": "Branch",
+                    "address": "Address",
+                    "is_active": True,
+                    "is_accepting_orders": True,
+                }
+            ],
             "menu": {"external_id": "menu-1", "name": "Menu", "items": []},
-            "availability": [],
+            "availability": [
+                {
+                    "branch_external_id": "branch-1",
+                    "items": [],
+                }
+            ],
         }
     )
 
@@ -51,6 +64,7 @@ async def test_sync_sends_current_contract(monkeypatch) -> None:
     assert response.status == "updated"
     assert client.payload["schema_version"] == 3
     assert client.payload["catalog_revision"] == 7
+    assert len(client.payload["branches"]) == 1
     assert all(
         "branch_version" not in branch for branch in client.payload["branches"]
     )
