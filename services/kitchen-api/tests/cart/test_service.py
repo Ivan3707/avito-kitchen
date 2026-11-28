@@ -1,10 +1,12 @@
+from types import SimpleNamespace as Obj
 from uuid import uuid4
 
 import pytest
 
+from app.core.errors import ResourceNotFoundError
 from app.infrastructure.unit_of_work import UnitOfWork
 from app.modules.cart.models.cart import Cart
-from app.modules.cart.models.cart_item import CartItem
+from app.modules.cart.schemas import AddCartItemRequest, UpdateCartItemRequest
 from app.modules.cart.service import CartService
 from app.modules.catalog.models.branch_menu_item import BranchMenuItem
 from app.modules.catalog.models.menu import Menu
@@ -15,10 +17,9 @@ from app.modules.catalog.models.restaurant_branch import (
 )
 from app.modules.users.models.user import User
 
-pytestmark = pytest.mark.integration
-
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 @pytest.mark.parametrize(
     ("price", "relation_available", "expected_available"),
     [(175, True, True), (None, False, False)],
@@ -79,20 +80,62 @@ async def test_cart_uses_selected_branch_price(
             price=price,
         )
     )
-    cart = uow.cart.carts.add(Cart(user_id=user.id, branch_id=branch.id))
-    await uow.session.flush()
-    uow.session.add(
-        CartItem(
-            cart_id=cart.id,
-            menu_item_id=menu_item.id,
-            quantity=2,
-        )
+    cart = uow.cart.carts.add(
+        Cart(user_id=user.id, branch_id=branch.id, items=[])
     )
     await uow.session.flush()
-
-    response = await CartService(
-        lambda: UnitOfWork(uow.session_factory)
-    ).get_cart(uow, user.id, branch.id)
+    service = CartService(lambda: UnitOfWork(uow.session_factory))
+    if relation_available:
+        added = await service.add_item(
+            uow,
+            user.id,
+            branch.id,
+            AddCartItemRequest(menu_item_id=menu_item.id, quantity=2),
+        )
+        assert added.items[0].quantity == 2
+    else:
+        cart.add_item(menu_item, 2)
+        await uow.session.flush()
+    response = await service.get_cart(uow, user.id, branch.id)
 
     assert response.items[0].price == price
     assert response.items[0].is_available is expected_available
+
+    updated = await service.update_item(
+        uow,
+        user.id,
+        branch.id,
+        menu_item.id,
+        UpdateCartItemRequest(quantity=3),
+    )
+    assert updated.items[0].quantity == 3
+    removed = await service.remove_item(uow, user.id, branch.id, menu_item.id)
+    assert removed.items == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+@pytest.mark.parametrize("operation", ["update", "remove"])
+async def test_missing_cart_item_maps_domain_error_to_api_error(operation):
+    cart = Cart(user_id=uuid4(), branch_id=uuid4(), items=[])
+
+    class Carts:
+        async def get_by_user_and_branch(self, **kwargs):
+            return cart
+
+    uow = Obj(cart=Obj(carts=Carts()))
+    service = CartService(lambda: uow)
+    with pytest.raises(ResourceNotFoundError, match="Cart item not found"):
+        if operation == "update":
+            await service.update_item(
+                uow,
+                cart.user_id,
+                cart.branch_id,
+                uuid4(),
+                UpdateCartItemRequest(quantity=2),
+            )
+        else:
+            await service.remove_item(
+                uow, cart.user_id, cart.branch_id, uuid4()
+            )
+    assert cart.items == []

@@ -3,7 +3,10 @@ from uuid import uuid4
 
 import pytest
 
+from app.modules.cart.models.cart import Cart
+from app.modules.cart.models.cart_item import CartItem
 from app.modules.cart.service import CartService
+from app.modules.catalog.models.menu_item import MenuItem
 from app.modules.checkout.schemas import CheckoutRequest
 from app.modules.checkout.service import CheckoutService
 
@@ -49,7 +52,10 @@ class FakeUow:
 
 
 def setup_checkout(
-    accepted, extra_quantity=0, rejection_reason="Restaurant result is unknown"
+    accepted,
+    extra_quantity=0,
+    rejection_reason="Restaurant result is unknown",
+    add_unordered_item=False,
 ):
     user = Obj(id=uuid4())
     restaurant = Obj(id=uuid4(), external_id="restaurant-1")
@@ -60,9 +66,22 @@ def setup_checkout(
         is_active=True,
         is_accepting_orders=True,
     )
-    menu_item = Obj(id=uuid4(), external_id="item-1", is_active=True)
-    item = Obj(menu_item_id=menu_item.id, menu_item=menu_item, quantity=2)
-    cart = Obj(items=[item])
+    menu_item = MenuItem(
+        id=uuid4(),
+        menu_id=uuid4(),
+        external_id="item-1",
+        name="Item",
+        is_active=True,
+    )
+    cart = Cart(id=uuid4(), user_id=user.id, branch_id=branch.id, items=[])
+    cart.add_item(menu_item, 2)
+    item: CartItem = cart.items[0]
+    other_menu_item = MenuItem(
+        id=uuid4(),
+        menu_id=menu_item.menu_id,
+        external_id="item-2",
+        name="Other",
+    )
     relation = Obj(is_available=True, price=100)
     entered = []
 
@@ -75,7 +94,11 @@ def setup_checkout(
             assert len(entered) == 1
             assert FakeUow.active == 0
             assert kwargs["request"].items[0].quantity == 2
-            item.quantity += extra_quantity
+            cart.update_item_quantity(
+                menu_item.id, item.quantity + extra_quantity
+            )
+            if add_unordered_item:
+                cart.add_item(other_menu_item, 4)
             if accepted:
                 return Obj(
                     accepted=True,
@@ -120,6 +143,21 @@ async def test_checkout_removes_fully_ordered_item():
     )
     assert response.accepted is True
     assert cart.items == []
+    assert len(entered) == 2
+
+
+@pytest.mark.asyncio
+async def test_checkout_keeps_item_added_after_order_request():
+    service, cart, _item, entered = setup_checkout(
+        True, add_unordered_item=True
+    )
+    response = await service.checkout(
+        "user@example.com", uuid4(), CheckoutRequest(order_id="order-1")
+    )
+    assert response.accepted is True
+    assert len(cart.items) == 1
+    assert cart.items[0].menu_item.external_id == "item-2"
+    assert cart.items[0].quantity == 4
     assert len(entered) == 2
 
 

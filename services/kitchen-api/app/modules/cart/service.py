@@ -2,8 +2,8 @@ from uuid import UUID, uuid4
 
 from app.core.errors import ConflictError, ResourceNotFoundError
 from app.infrastructure.unit_of_work import UnitOfWork, UowFactory
+from app.modules.cart.errors import CartItemNotFoundError
 from app.modules.cart.models.cart import Cart
-from app.modules.cart.models.cart_item import CartItem
 from app.modules.cart.schemas import (
     AddCartItemRequest,
     CartItemResponse,
@@ -70,14 +70,7 @@ class CartService:
         cart = await uow.cart.carts.get_by_user_and_branch_for_update(
             user_id, branch_id
         )
-        for item in list(cart.items):
-            ordered = ordered_quantities.get(item.menu_item_id, 0)
-            if ordered == 0:
-                continue
-            if item.quantity <= ordered:
-                cart.items.remove(item)
-            else:
-                item.quantity -= ordered
+        cart.remove_ordered_quantities(ordered_quantities)
 
     async def get_cart(
         self,
@@ -130,20 +123,7 @@ class CartService:
         ):
             raise ConflictError("Menu item is unavailable")
 
-        existing_item = next(
-            (item for item in cart.items if item.menu_item_id == menu_item.id),
-            None,
-        )
-
-        if existing_item is not None:
-            existing_item.quantity += request.quantity
-        else:
-            cart.items.append(
-                CartItem(
-                    menu_item=menu_item,
-                    quantity=request.quantity,
-                )
-            )
+        cart.add_item(menu_item, request.quantity)
 
         return await self._to_response(uow, cart)
 
@@ -161,15 +141,10 @@ class CartService:
             branch_id=branch_id,
         )
 
-        item = next(
-            (item for item in cart.items if item.menu_item_id == menu_item_id),
-            None,
-        )
-
-        if item is None:
-            raise ResourceNotFoundError("Cart item not found")
-
-        item.quantity = request.quantity
+        try:
+            cart.update_item_quantity(menu_item_id, request.quantity)
+        except CartItemNotFoundError as exc:
+            raise ResourceNotFoundError("Cart item not found") from exc
 
         return await self._to_response(uow, cart)
 
@@ -186,15 +161,10 @@ class CartService:
             branch_id=branch_id,
         )
 
-        item = next(
-            (item for item in cart.items if item.menu_item_id == menu_item_id),
-            None,
-        )
-
-        if item is None:
-            raise ResourceNotFoundError("Cart item not found")
-
-        cart.items.remove(item)
+        try:
+            cart.remove_item(menu_item_id)
+        except CartItemNotFoundError as exc:
+            raise ResourceNotFoundError("Cart item not found") from exc
 
         return await self._to_response(uow, cart)
 
